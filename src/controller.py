@@ -219,6 +219,11 @@ def enqueue_mother_surnames(
 
 
 def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_FILE):
+    match_mode = getattr(args, "surname_match", None)
+    if match_mode is None:
+        match_mode = "exact" if args.force_exact else "partial"
+    use_exact_query = match_mode == "exact"
+    normalize_queue = match_mode == "partial"
     if args.config_env:
         configure_envrc(envrc_path)
         if not args.surnames:
@@ -249,7 +254,7 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
             return
     if args.queue_status:
         db_conn = connect_db(db_path)
-        if not args.force_exact:
+        if normalize_queue:
             normalize_queue_surnames(db_conn)
         names = [nome.lower() for nome in fetch_known_names(db_conn)]
         if not names:
@@ -267,7 +272,7 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
         partial = 0
         none = 0
         for cognome in known:
-            count = count_query_triplette(db_conn, cognome, args.force_exact)
+            count = count_query_triplette(db_conn, cognome, use_exact_query)
             if count >= total_triplette:
                 status = "completo"
                 full += 1
@@ -314,7 +319,7 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
     nuovi_nomi: Set[str] = set()
 
     if db_conn and args.surnames:
-        if not args.force_exact:
+        if normalize_queue:
             normalize_queue_surnames(db_conn)
         for raw_cognome in args.surnames:
             normalized = normalize_surname(raw_cognome)
@@ -323,13 +328,13 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                     db_conn,
                     normalized,
                     fonte="cli",
-                    use_prefix=not args.force_exact,
+                    use_prefix=match_mode == "partial",
                 )
 
     iterations = 0
     pending: List[str] = []
     if db_conn:
-        if not args.force_exact:
+        if normalize_queue:
             normalize_queue_surnames(db_conn)
         pending = fetch_pending_surnames(db_conn, args.batch_size)
 
@@ -343,7 +348,7 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
             normalized = normalize_surname(cognome)
             cognome_query = (
                 normalize_surname_prefix(normalized)
-                if not args.force_exact
+                if not use_exact_query
                 else normalized
             )
             cached_triplette = set()
@@ -351,14 +356,14 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                 cached_triplette = fetch_cached_triplette(
                     db_conn,
                     cognome_query,
-                    args.force_exact,
+                    use_exact_query,
                 )
             connessione = None
             total_triplette = len(triplette.lista)
             width = len(str(total_triplette))
             for idx, tripletta in enumerate(triplette.lista.keys(), start=1):
                 if db_conn and not args.no_cache:
-                    if query_exists(db_conn, cognome_query, tripletta, args.force_exact):
+                    if query_exists(db_conn, cognome_query, tripletta, use_exact_query):
                         cached_triplette.add(tripletta)
                         print(
                             f"[{idx:{width}}/{total_triplette}] "
@@ -377,7 +382,7 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                 risultati = connessione.query(
                     cognome_query,
                     tripletta,
-                    cognome_esatto=args.force_exact,
+                    cognome_esatto=use_exact_query,
                 )
                 formatted = [format_result_row(row) for row in risultati]
                 if db_conn:
@@ -386,7 +391,7 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                         db_conn,
                         cognome_query,
                         tripletta,
-                        args.force_exact,
+                        use_exact_query,
                         len(risultati),
                     )
                     cached_triplette.add(tripletta)
@@ -395,11 +400,11 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                     f"{cognome} {tripletta} {len(risultati)}"
                 )
 
-            cognome_lookup = cognome if args.force_exact else cognome_query
+            cognome_lookup = normalized if match_mode == "soundex" else cognome_query
             results = (
-                fetch_people(db_conn, cognome_query, args.force_exact) if db_conn else []
+                fetch_people(db_conn, cognome_lookup, match_mode) if db_conn else []
             )
-            print_results(cognome_query, results)
+            print_results(cognome_lookup, results)
             combined.update(tuple(row) for row in results)
             nuovi_nomi.update(row[1].lower() for row in results if len(row) > 1 and row[1])
             if db_conn:
@@ -414,15 +419,15 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                             db_conn,
                             normalized,
                             fonte=f"cognome:{cognome}",
-                            use_prefix=not args.force_exact,
+                            use_prefix=match_mode == "partial",
                         )
                 enqueue_mother_surnames(
                     db_conn,
                     cognome_query,
                     results,
-                    use_prefix=not args.force_exact,
+                    use_prefix=match_mode == "partial",
                 )
-                mark_surname_done(db_conn, cognome_query, args.force_exact)
+                mark_surname_done(db_conn, cognome_query, use_exact_query)
 
         pending = fetch_pending_surnames(db_conn, args.batch_size) if db_conn else []
 

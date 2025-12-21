@@ -280,7 +280,8 @@ class RicercaLeva:
                 if dump and filename is not None:
                     self.dump(filename)
             if db_conn:
-                cached_rows = fetch_people(db_conn, self.cognome, self.cognome_esatto)
+                match_mode = "exact" if self.cognome_esatto else "partial"
+                cached_rows = fetch_people(db_conn, self.cognome, match_mode)
                 for row in self._format_cached_rows(cached_rows):
                     self.ricerche.add(row)
         finally:

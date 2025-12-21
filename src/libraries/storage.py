@@ -26,6 +26,7 @@ def connect_db(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA synchronous=NORMAL;")
     conn.execute("PRAGMA busy_timeout=5000;")
     conn.create_function("REGEXP", 2, _regexp)
+    conn.create_function("SOUNDEX_IT", 1, soundex)
     _init_db(conn)
     return conn
 
@@ -37,6 +38,47 @@ def _regexp(pattern: str, value: Optional[str]) -> int:
         return 1 if re.search(pattern, value, flags=re.IGNORECASE) else 0
     except re.error:
         return 0
+
+
+def soundex(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    normalized = re.sub(r"[^A-Z]", "", normalize_surname(value).upper())
+    if not normalized:
+        return ""
+    mapping = {
+        "B": "1",
+        "F": "1",
+        "P": "1",
+        "V": "1",
+        "C": "2",
+        "G": "2",
+        "J": "2",
+        "K": "2",
+        "Q": "2",
+        "S": "2",
+        "X": "2",
+        "Z": "2",
+        "D": "3",
+        "T": "3",
+        "L": "4",
+        "M": "5",
+        "N": "5",
+        "R": "6",
+    }
+    first = normalized[0]
+    encoded = [first]
+    last_code = mapping.get(first, "")
+    for char in normalized[1:]:
+        code = mapping.get(char, "")
+        if code == last_code:
+            continue
+        if code:
+            encoded.append(code)
+        last_code = code
+        if len(encoded) == 4:
+            break
+    return ("".join(encoded) + "000")[:4]
 
 
 def _init_db(conn: sqlite3.Connection) -> None:
@@ -481,14 +523,19 @@ def fetch_cached_triplette(
 def fetch_people(
     conn: sqlite3.Connection,
     cognome: str,
-    cognome_esatto: bool,
+    match_mode: str,
 ) -> List[sqlite3.Row]:
-    if cognome_esatto:
-        clause = "cognome = ?"
-        param = cognome
+    if match_mode == "exact":
+        clause = "LOWER(TRIM(cognome)) = LOWER(TRIM(?))"
+        param = cognome.strip()
+    elif match_mode == "soundex":
+        normalized = normalize_surname(cognome)
+        clause = "SOUNDEX_IT(cognome) = SOUNDEX_IT(?)"
+        param = normalized
     else:
+        normalized = normalize_surname(cognome)
         clause = "cognome LIKE ?"
-        param = f"%{cognome}%"
+        param = f"%{normalized}%"
     conn.row_factory = sqlite3.Row
     cursor = conn.execute(
         f"""
