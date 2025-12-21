@@ -1,0 +1,257 @@
+import hashlib
+import re
+import sqlite3
+from pathlib import Path
+from typing import Iterable, List, Optional, Sequence
+
+DATA_FIELDS = (
+    "cognome",
+    "nome",
+    "data_nascita",
+    "luogo_nascita",
+    "provincia",
+    "comune_iscrizione",
+    "mandamento",
+    "padre",
+    "madre",
+)
+
+PERSON_FIELDS = DATA_FIELDS + ("fonte", "hash_unico")
+
+
+def connect_db(path: Path) -> sqlite3.Connection:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    conn.execute("PRAGMA busy_timeout=5000;")
+    conn.create_function("REGEXP", 2, _regexp)
+    _init_db(conn)
+    return conn
+
+
+def _regexp(pattern: str, value: Optional[str]) -> int:
+    if value is None:
+        return 0
+    try:
+        return 1 if re.search(pattern, value, flags=re.IGNORECASE) else 0
+    except re.error:
+        return 0
+
+
+def _init_db(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS persons (
+            id INTEGER PRIMARY KEY,
+            cognome TEXT NOT NULL,
+            nome TEXT NOT NULL,
+            data_nascita TEXT,
+            luogo_nascita TEXT,
+            provincia TEXT,
+            comune_iscrizione TEXT,
+            mandamento TEXT,
+            padre TEXT,
+            madre TEXT,
+            fonte TEXT,
+            hash_unico TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS queries (
+            id INTEGER PRIMARY KEY,
+            cognome TEXT NOT NULL,
+            nome_triplette TEXT NOT NULL,
+            cognome_esatto INTEGER NOT NULL,
+            timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+            risultato_count INTEGER NOT NULL,
+            UNIQUE(cognome, nome_triplette, cognome_esatto)
+        );
+        """
+    )
+    _ensure_column(conn, "persons", "fonte", "TEXT")
+    _ensure_column(conn, "persons", "hash_unico", "TEXT")
+    _ensure_column(conn, "queries", "timestamp", "TEXT")
+    _ensure_column(conn, "queries", "risultato_count", "INTEGER")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS persons_hash_unico_idx "
+        "ON persons(hash_unico);"
+    )
+    _backfill_hashes(conn)
+    conn.commit()
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    cursor = conn.execute(f"PRAGMA table_info({table});")
+    existing = {row[1] for row in cursor.fetchall()}
+    if column in existing:
+        return
+    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition};")
+
+
+def _backfill_hashes(conn: sqlite3.Connection) -> None:
+    cursor = conn.execute(
+        f"""
+        SELECT id, {", ".join(DATA_FIELDS)}
+        FROM persons
+        WHERE hash_unico IS NULL OR hash_unico = "";
+        """
+    )
+    rows = cursor.fetchall()
+    if not rows:
+        return
+    payload: List[Sequence[str]] = []
+    for row in rows:
+        person_id = row[0]
+        data = row[1:]
+        payload.append((_hash_person(data), person_id))
+    conn.executemany(
+        "UPDATE persons SET hash_unico = ? WHERE id = ?;",
+        payload,
+    )
+
+
+def _hash_person(values: Sequence[Optional[str]]) -> str:
+    normalized = [
+        (value or "").strip().lower()
+        for value in values[: len(DATA_FIELDS)]
+    ]
+    digest = hashlib.sha256("|".join(normalized).encode("utf-8")).hexdigest()
+    return digest
+
+
+def upsert_people(
+    conn: sqlite3.Connection,
+    rows: Iterable[Sequence[str]],
+    fonte: str,
+) -> int:
+    payload: List[Sequence[str]] = []
+    for row in rows:
+        if len(row) < len(DATA_FIELDS):
+            continue
+        values = list(row[: len(DATA_FIELDS)])
+        hash_unico = _hash_person(values)
+        payload.append((*values, fonte, hash_unico))
+    if not payload:
+        return 0
+    conn.executemany(
+        f"""
+        INSERT INTO persons ({", ".join(PERSON_FIELDS)})
+        VALUES ({", ".join(["?"] * len(PERSON_FIELDS))})
+        ON CONFLICT(hash_unico) DO UPDATE SET
+            cognome = excluded.cognome,
+            nome = excluded.nome,
+            data_nascita = excluded.data_nascita,
+            luogo_nascita = excluded.luogo_nascita,
+            provincia = excluded.provincia,
+            comune_iscrizione = excluded.comune_iscrizione,
+            mandamento = excluded.mandamento,
+            padre = excluded.padre,
+            madre = excluded.madre,
+            fonte = excluded.fonte;
+        """,
+        payload,
+    )
+    conn.commit()
+    return len(payload)
+
+
+def record_query(
+    conn: sqlite3.Connection,
+    cognome: str,
+    nome_triplette: str,
+    cognome_esatto: bool,
+    risultato_count: int,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO queries (
+            cognome,
+            nome_triplette,
+            cognome_esatto,
+            timestamp,
+            risultato_count
+        )
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)
+        ON CONFLICT(cognome, nome_triplette, cognome_esatto) DO UPDATE SET
+            timestamp = excluded.timestamp,
+            risultato_count = excluded.risultato_count;
+        """,
+        (cognome, nome_triplette, int(bool(cognome_esatto)), risultato_count),
+    )
+    conn.commit()
+
+
+def query_exists(
+    conn: sqlite3.Connection,
+    cognome: str,
+    nome_triplette: str,
+    cognome_esatto: bool,
+) -> bool:
+    cursor = conn.execute(
+        """
+        SELECT 1
+        FROM queries
+        WHERE cognome = ?
+          AND nome_triplette = ?
+          AND cognome_esatto = ?
+        LIMIT 1;
+        """,
+        (cognome, nome_triplette, int(bool(cognome_esatto))),
+    )
+    return cursor.fetchone() is not None
+
+
+def fetch_people(
+    conn: sqlite3.Connection,
+    cognome: str,
+    cognome_esatto: bool,
+) -> List[sqlite3.Row]:
+    if cognome_esatto:
+        clause = "cognome = ?"
+        param = cognome
+    else:
+        clause = "cognome LIKE ?"
+        param = f"%{cognome}%"
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute(
+        f"""
+        SELECT {", ".join(DATA_FIELDS)}
+        FROM persons
+        WHERE {clause}
+        ORDER BY cognome, nome, data_nascita;
+        """,
+        (param,),
+    )
+    return cursor.fetchall()
+
+
+def search_people(
+    conn: sqlite3.Connection,
+    pattern: str,
+    fields: Optional[Sequence[str]] = None,
+    limit: Optional[int] = None,
+) -> List[sqlite3.Row]:
+    if fields:
+        selected_fields = [field for field in fields if field in DATA_FIELDS]
+    else:
+        selected_fields = list(DATA_FIELDS)
+    if not selected_fields:
+        selected_fields = list(DATA_FIELDS)
+    where = " OR ".join([f"{field} REGEXP ?" for field in selected_fields])
+    params: List[object] = [pattern for _ in selected_fields]
+    sql = f"""
+        SELECT {", ".join(DATA_FIELDS)}
+        FROM persons
+        WHERE {where}
+        ORDER BY cognome, nome, data_nascita
+    """
+    if limit:
+        sql += " LIMIT ?"
+        params.append(limit)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute(sql, params)
+    return cursor.fetchall()
