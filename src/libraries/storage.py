@@ -397,6 +397,59 @@ def mark_surname_done(
     conn.commit()
 
 
+def normalize_queue_surnames(conn: sqlite3.Connection) -> int:
+    cursor = conn.execute(
+        """
+        SELECT cognome, stato, fonte, timestamp
+        FROM surnames_queue;
+        """
+    )
+    rows = cursor.fetchall()
+    changes = 0
+    for cognome, stato, fonte, timestamp in rows:
+        normalized = normalize_surname_prefix(cognome)
+        if not normalized or normalized == cognome:
+            continue
+        existing = conn.execute(
+            """
+            SELECT stato
+            FROM surnames_queue
+            WHERE cognome = ?;
+            """,
+            (normalized,),
+        ).fetchone()
+        if existing:
+            if stato == "pending" and existing[0] != "pending":
+                conn.execute(
+                    """
+                    UPDATE surnames_queue
+                    SET stato = "pending",
+                        timestamp = CURRENT_TIMESTAMP
+                    WHERE cognome = ?;
+                    """,
+                    (normalized,),
+                )
+        else:
+            conn.execute(
+                """
+                INSERT INTO surnames_queue (cognome, stato, fonte, timestamp)
+                VALUES (?, ?, ?, ?);
+                """,
+                (normalized, stato, fonte, timestamp),
+            )
+        conn.execute(
+            """
+            DELETE FROM surnames_queue
+            WHERE cognome = ?;
+            """,
+            (cognome,),
+        )
+        changes += 1
+    if changes:
+        conn.commit()
+    return changes
+
+
 def fetch_cached_triplette(
     conn: sqlite3.Connection,
     cognome: str,
