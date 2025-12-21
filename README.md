@@ -39,7 +39,7 @@ Questo progetto automatizza la consultazione dell'archivio di leva di Padova e R
 - Effettuare il login con le credenziali configurate in ambiente.
 - Eseguire ricerche per uno o più cognomi utilizzando combinazioni di tre lettere derivate dai nomi noti.
 - Deduplicare e mostrare i risultati direttamente a terminale oppure salvarli in formato tabulato.
-- Aggiornare automaticamente il dizionario dei nomi quando ne vengono trovati di nuovi.
+- Aggiornare automaticamente il dizionario dei nomi nel database quando ne vengono trovati di nuovi.
 - Gestire una cache locale per evitare richieste ripetute al sito.
 
 ## Opzioni della CLI
@@ -74,11 +74,11 @@ Forza la ricerca sul cognome esatto (evita corrispondenze parziali).
 uv run leva-cli "De Rossi" --force-exact
 ```
 
-### `--aggiorna FILE`
-Aggiorna il file con l'elenco dei nomi noti aggiungendo quelli nuovi trovati durante la sessione. Se il file non esiste viene creato.
+### `--import-names FILE`
+Importa un elenco iniziale di nomi nel database. Il file serve solo come base iniziale: dopo l'import, il database diventa l'unica fonte dei nomi e si aggiorna automaticamente.
 
 ```
-uv run leva-cli Rossi --aggiorna data/nomi.txt
+uv run leva-cli --import-names data/nomi.txt
 ```
 
 ### `--db`
@@ -143,7 +143,7 @@ Il programma riduce le richieste al server combinando cache locale e inferenza s
 
 ### Passi principali
 1. **Generazione delle triplette dai nomi noti**  
-   Dal file `data/nomi.txt` vengono estratte tutte le triplette (finestre di 3 caratteri) per ogni nome. Si contano le occorrenze per stabilire l'ordine di ricerca.
+   Dal database locale vengono estratte tutte le triplette (finestre di 3 caratteri) per ogni nome. Si contano le occorrenze per stabilire l'ordine di ricerca. Se il database è vuoto è possibile inizializzarlo una sola volta con `--import-names`.
 
 2. **Costruzione della copertura**  
    Per ogni tripletta viene costruito l'insieme degli indici dei nomi in cui compare. Questo permette di stabilire se una tripletta A è un sottoinsieme di un'altra tripletta B (ovvero, ogni nome che contiene A contiene anche B).
@@ -168,11 +168,11 @@ Il programma riduce le richieste al server combinando cache locale e inferenza s
 
 Ricordati di lanciare `direnv allow` la prima volta nella cartella del progetto così che username e password siano caricati dalle variabili d'ambiente definite in `.envrc`.
 
-### Base
+### Base (dopo import iniziale dei nomi)
 ```
 uv run leva-cli Rossi
 ```
-Cerca il cognome Rossi utilizzando il file `data/nomi.txt` e stampa i risultati sullo standard output.
+Cerca il cognome Rossi utilizzando i nomi salvati nel database locale e stampa i risultati sullo standard output.
 
 ### Più cognomi nella stessa sessione
 ```
@@ -198,8 +198,8 @@ uv run leva-cli "De Rossi" --force-exact
 ```
 Limita la ricerca al cognome esatto, evitando corrispondenze parziali.
 
-### Aggiornare il dizionario dei nomi
+### Import iniziale dei nomi
 ```
-uv run leva-cli Rossi --aggiorna data/nomi.txt
+uv run leva-cli --import-names data/nomi.txt
 ```
-Oltre alle ricerche, aggiunge alla lista dei nomi qualsiasi nuovo nome scoperto e salva l’elenco aggiornato.
+Carica i nomi dal file nel database. Da questo momento in poi il database è la fonte unica dei nomi e viene aggiornato automaticamente quando si trovano nuovi risultati.
