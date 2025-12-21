@@ -1,0 +1,7 @@
+.python-version
+risultati
+__pycache__
+.envrc
+.env
+.vscode
+.DS_Store

@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scraper_leva_padova"
+version = "0.0.2"
+authors = [{ name = "Uberdev", email = "uber@yomama.com" }]
+description = "Scraper for the military conscription archives of Padua and Rovigo provinces, Veneto, Italy"
+readme = "README.md"
+dependencies = ["cachetools", "requests", "loguru"]
+requires-python = ">=3.13"
+
+[project.scripts]
+conscraper = "src.cli:main"
