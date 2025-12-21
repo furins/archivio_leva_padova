@@ -1,0 +1,19 @@
+# Copilot Instructions
+
+- **Obiettivo**: script CLI che effettua login sull'archivio di leva di Padova/Rovigo, esegue ricerche per cognome usando combinazioni di nomi (triplette) e restituisce risultati deduplicati e ordinati, minimizzando le richieste al server.
+- **Entry point**: `uv run leva-cli ...` o `python -m cli ...`. Il comando `--config-env` popola `.envrc` con credenziali; senza cognomi termina dopo la configurazione.
+- **Ambiente**: Python 3.13, dipendenze in `pyproject.toml` (requests, bs4, loguru, cachetools). Setup tipico: `uv sync`, `uv run leva-cli --config-env`, `direnv allow` (richiede direnv installato).
+- **Credenziali**: lettura da env `LEVA_PADOVA_USERNAME` e `LEVA_PADOVA_PASSWORD` tramite descriptor in [../src/libraries/secrets.py](../src/libraries/secrets.py). Manca -> `RuntimeError`. `--config-env` aggiorna `.envrc` preservando eventuali export esistenti.
+- **Flusso CLI** ([../src/cli.py](../src/cli.py)): parsifica opzioni (`--no-cache`, `--output`, `--force-exact`, `--aggiorna`, `--config-env`). Carica cache JSON, costruisce `Triplette`, esegue `RicercaLeva` per ogni cognome, deduplica e ordina (data, nome, cognome), stampa TSV su stdout ed eventualmente salva su file.
+- **Triplette** ([../src/libraries/triplette.py](../src/libraries/triplette.py)): genera tutte le sottostringhe di 3 lettere dai nomi in un file (default `data/nomi.txt`), conteggia frequenze e ordina per frequenza decrescente. Ogni tripletta viene usata come “nome” da passare alla ricerca.
+- **Scraper** ([../src/libraries/leva_padova.py](../src/libraries/leva_padova.py)): `LevaPadova` apre una sessione autenticata (POST a login.php) e `query` invia POST a consulta.php con cognome, tripletta come nome e campi vuoti per il resto; `TabellaLeva`/`RigaLeva` estraggono colonne, normalizzano formattazione, convertono data in `datetime` e numeri in int. `RicercaLeva.search` cicla su tutte le triplette (progress su stdout), filtra cognome esatto se richiesto, salva tuple deduplicate.
+- **Cache locale**: `risultati/cache.json` mappa `"{cognome_lower}|{force_exact_flag}"` -> lista di liste di valori già serializzati (date come stringhe ISO). Usare `--no-cache` solo se necessario; il CLI salva cache solo se mutate.
+- **Aggiornamento nomi**: con `--aggiorna FILE` il CLI confronta i nomi trovati con quelli esistenti e appende i nuovi al file indicato (default `data/nomi.txt`), in minuscolo una riga per nome.
+- **Output**: stampa TSV con intestazioni fisse; `--output` salva in path (crea dir). Ordinamento coerente via `sort_rows` (data nascita, nome, cognome) sia per stampa sia per salvataggio.
+- **Performance/etichetta verso il sito**: evitare parallelismo; riutilizzare la cache; non usare `--no-cache` o ricerche superflue; ogni `RicercaLeva` crea una nuova sessione autenticata, quindi raggruppare più cognomi nella stessa invocazione per limitare login.
+- **Dati di esempio**: in `risultati/*.csv` ci sono esportazioni precedenti utili per verifiche offline; non sono letti dal codice.
+- **Aggiunta di funzionalità**: rispettare la pipeline esistente (Triplette -> RicercaLeva -> cache/print); mantenere la compatibilità TSV e la forma della cache; se servono nuovi campi, aggiornare `HEADER`, serializzazione cache e formattazione `RigaLeva` in modo coerente.
+- **Error handling**: lo scraper alza `RuntimeError` se mancano credenziali e `BaseException` con status code se il login fallisce; gestire eventuali errori HTTP esplicitamente se si aggiungono feature.
+- **Test manuali rapidi**: `uv run leva-cli Rossi` (usa cache se presente), `uv run leva-cli Rossi --no-cache` per forzare nuove richieste, `uv run leva-cli Rossi --output risultati/rossi.tsv --aggiorna data/nomi.txt` per persistenza completa.
+
+Aggiorna questo file se cambiano formato della cache, parametri di login o struttura HTML delle tabelle. In caso di dubbi o parti mancanti, segnalare cosa va chiarito.
