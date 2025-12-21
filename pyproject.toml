@@ -18,7 +18,7 @@ requires-python = ">=3.13"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["cli"]
+py-modules = ["cli", "controller"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
