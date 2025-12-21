@@ -14,6 +14,7 @@ from libraries.storage import (
     fetch_cached_triplette,
     fetch_known_names,
     fetch_known_surnames,
+    fetch_surnames,
     fetch_pending_surnames,
     fetch_people,
     mark_surname_done,
@@ -223,7 +224,7 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
         if not args.surnames:
             return
     db_path = Path(args.db) if args.db else default_db_path
-    db_conn = connect_db(db_path) if (args.surnames or args.search) else None
+    db_conn = connect_db(db_path) if (args.surnames or args.search or args.list_surnames) else None
     if args.import_names:
         if db_conn is None:
             db_conn = connect_db(db_path)
@@ -231,6 +232,18 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
         imported = load_names_from_file(names_file)
         count = upsert_names(db_conn, imported, fonte="import")
         print(f"Importati {count} nomi da {names_file}")
+        if not args.surnames and not args.search and not args.queue_status and not args.list_surnames:
+            db_conn.close()
+            return
+    if args.list_surnames:
+        if db_conn is None:
+            db_conn = connect_db(db_path)
+        surnames = fetch_surnames(db_conn)
+        if surnames:
+            for surname in surnames:
+                print(surname)
+        else:
+            print("Nessun cognome disponibile nel database.")
         if not args.surnames and not args.search and not args.queue_status:
             db_conn.close()
             return

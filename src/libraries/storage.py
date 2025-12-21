@@ -345,6 +345,17 @@ def fetch_known_surnames(conn: sqlite3.Connection) -> List[str]:
     return [row[0] for row in cursor.fetchall()]
 
 
+def fetch_surnames(conn: sqlite3.Connection) -> List[str]:
+    cursor = conn.execute(
+        """
+        SELECT DISTINCT cognome
+        FROM persons
+        ORDER BY cognome;
+        """
+    )
+    return [row[0] for row in cursor.fetchall()]
+
+
 def count_query_triplette(
     conn: sqlite3.Connection,
     cognome: str,
