@@ -73,7 +73,12 @@ class TabellaLeva:
     def __init__(self, tree, cognome_richiesto, cognome_esatto=True) -> None:
         tabella = tree.find("table", {"class": "table-risultati"})
         self.parsed = []
-        for riga in tabella.find("tbody").findAll("tr"):
+        if tabella is None:
+            return
+        tbody = tabella.find("tbody")
+        if tbody is None:
+            return
+        for riga in tbody.findAll("tr"):
             dati_riga = RigaLeva(riga)
             if not cognome_esatto:
                 self.parsed.append(dati_riga.parsed)
