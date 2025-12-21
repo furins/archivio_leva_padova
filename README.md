@@ -47,7 +47,7 @@ Questo progetto automatizza la consultazione dell'archivio di leva di Padova e R
 Il comando principale è `leva-cli`. Ogni opzione è descritta qui sotto con un esempio d'uso.
 
 ### Cognomi (argomenti posizionali)
-Permette di passare uno o più cognomi (o parti di essi) da cercare. Se non si fornisce nessun cognome è necessario usare `--config-env`, `--search` o `--queue-status`.
+Permette di passare uno o più cognomi (o parti di essi) da cercare. Se non si fornisce nessun cognome è necessario usare `--config-env`, `--search`, `--queue-status` o `--list-surnames`.
 
 ```
 uv run leva-cli Rossi Bianchi
@@ -121,6 +121,13 @@ Mostra l'elenco dei cognomi noti e lo stato delle interrogazioni in coda (utile 
 
 ```
 uv run leva-cli --queue-status
+```
+
+### `--list-surnames`
+Stampa tutti i cognomi noti salvati nel database locale.
+
+```
+uv run leva-cli --list-surnames
 ```
 
 ### `--batch-size`

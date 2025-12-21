@@ -60,6 +60,11 @@ def parse_args():
         help="Mostra l'elenco dei cognomi noti con stato interrogazioni",
     )
     parser.add_argument(
+        "--list-surnames",
+        action="store_true",
+        help="Stampa l'elenco dei cognomi noti nel database",
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=10,
@@ -78,6 +83,7 @@ def parse_args():
         and not args.search
         and not args.queue_status
         and not args.import_names
+        and not args.list_surnames
     ):
         parser.error("Specificare almeno un cognome oppure usare --config-env")
     return args
