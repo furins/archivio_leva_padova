@@ -382,6 +382,7 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                     f"{cognome} {tripletta} {len(risultati)}"
                 )
 
+            cognome_lookup = cognome if args.force_exact else cognome_query
             results = (
                 fetch_people(db_conn, cognome_query, args.force_exact) if db_conn else []
             )

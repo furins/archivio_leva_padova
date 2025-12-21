@@ -379,14 +379,20 @@ def mark_surname_done(
     )
     if not normalized:
         return
+    if cognome_esatto:
+        clause = "cognome = ?"
+        params = (normalized,)
+    else:
+        clause = "cognome = ? OR cognome LIKE ?"
+        params = (normalized, f"{normalized}%")
     conn.execute(
-        """
+        f"""
         UPDATE surnames_queue
         SET stato = "done",
             timestamp = CURRENT_TIMESTAMP
-        WHERE cognome = ?;
+        WHERE {clause};
         """,
-        (normalized,),
+        params,
     )
     conn.commit()
 
