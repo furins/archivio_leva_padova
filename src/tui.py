@@ -302,7 +302,7 @@ class LevaTuiApp(App):
                 "batch_size": values.get("batch_size") or 10,
                 "max_iterations": values.get("max_iterations") or 100,
             },
-            output_targets=(self.log_widget(), self.output_widget()),
+            output_targets=(self.log_widget(),),
         )
 
     def submit_search(self, values: Dict[str, object]) -> None:
