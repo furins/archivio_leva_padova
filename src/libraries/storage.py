@@ -72,13 +72,32 @@ def _init_db(conn: sqlite3.Connection) -> None:
         );
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS surnames_queue (
+            id INTEGER PRIMARY KEY,
+            cognome TEXT NOT NULL,
+            stato TEXT NOT NULL,
+            fonte TEXT,
+            timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(cognome)
+        );
+        """
+    )
     _ensure_column(conn, "persons", "fonte", "TEXT")
     _ensure_column(conn, "persons", "hash_unico", "TEXT")
     _ensure_column(conn, "queries", "timestamp", "TEXT")
     _ensure_column(conn, "queries", "risultato_count", "INTEGER")
+    _ensure_column(conn, "surnames_queue", "stato", "TEXT")
+    _ensure_column(conn, "surnames_queue", "fonte", "TEXT")
+    _ensure_column(conn, "surnames_queue", "timestamp", "TEXT")
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS persons_hash_unico_idx "
         "ON persons(hash_unico);"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS surnames_queue_stato_idx "
+        "ON surnames_queue(stato);"
     )
     _backfill_hashes(conn)
     conn.commit()
@@ -121,6 +140,10 @@ def _hash_person(values: Sequence[Optional[str]]) -> str:
     ]
     digest = hashlib.sha256("|".join(normalized).encode("utf-8")).hexdigest()
     return digest
+
+
+def normalize_surname(cognome: str) -> str:
+    return cognome.strip().title()
 
 
 def upsert_people(
@@ -203,6 +226,87 @@ def query_exists(
         (cognome, nome_triplette, int(bool(cognome_esatto))),
     )
     return cursor.fetchone() is not None
+
+
+def enqueue_surname(
+    conn: sqlite3.Connection,
+    cognome: str,
+    fonte: str,
+    stato: str = "pending",
+) -> None:
+    normalized = normalize_surname(cognome)
+    if not normalized:
+        return
+    conn.execute(
+        """
+        INSERT INTO surnames_queue (cognome, stato, fonte, timestamp)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(cognome) DO NOTHING;
+        """,
+        (normalized, stato, fonte),
+    )
+    conn.commit()
+
+
+def fetch_pending_surnames(
+    conn: sqlite3.Connection,
+    limit: int,
+) -> List[str]:
+    cursor = conn.execute(
+        """
+        SELECT cognome
+        FROM surnames_queue
+        WHERE stato = "pending"
+        ORDER BY timestamp
+        LIMIT ?;
+        """,
+        (limit,),
+    )
+    return [row[0] for row in cursor.fetchall()]
+
+
+def fetch_known_surnames(conn: sqlite3.Connection) -> List[str]:
+    cursor = conn.execute(
+        """
+        SELECT cognome
+        FROM surnames_queue
+        ORDER BY cognome;
+        """
+    )
+    return [row[0] for row in cursor.fetchall()]
+
+
+def count_query_triplette(
+    conn: sqlite3.Connection,
+    cognome: str,
+    cognome_esatto: bool,
+) -> int:
+    cursor = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM queries
+        WHERE cognome = ?
+          AND cognome_esatto = ?;
+        """,
+        (normalize_surname(cognome), int(bool(cognome_esatto))),
+    )
+    return int(cursor.fetchone()[0])
+
+
+def mark_surname_done(conn: sqlite3.Connection, cognome: str) -> None:
+    normalized = normalize_surname(cognome)
+    if not normalized:
+        return
+    conn.execute(
+        """
+        UPDATE surnames_queue
+        SET stato = "done",
+            timestamp = CURRENT_TIMESTAMP
+        WHERE cognome = ?;
+        """,
+        (normalized,),
+    )
+    conn.commit()
 
 
 def fetch_cached_triplette(
