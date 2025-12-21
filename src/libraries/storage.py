@@ -350,6 +350,11 @@ def count_query_triplette(
     cognome: str,
     cognome_esatto: bool,
 ) -> int:
+    normalized = (
+        normalize_surname(cognome)
+        if cognome_esatto
+        else normalize_surname_prefix(cognome)
+    )
     cursor = conn.execute(
         """
         SELECT COUNT(*)
@@ -357,13 +362,21 @@ def count_query_triplette(
         WHERE cognome = ?
           AND cognome_esatto = ?;
         """,
-        (normalize_surname(cognome), int(bool(cognome_esatto))),
+        (normalized, int(bool(cognome_esatto))),
     )
     return int(cursor.fetchone()[0])
 
 
-def mark_surname_done(conn: sqlite3.Connection, cognome: str) -> None:
-    normalized = normalize_surname(cognome)
+def mark_surname_done(
+    conn: sqlite3.Connection,
+    cognome: str,
+    cognome_esatto: bool,
+) -> None:
+    normalized = (
+        normalize_surname(cognome)
+        if cognome_esatto
+        else normalize_surname_prefix(cognome)
+    )
     if not normalized:
         return
     conn.execute(
@@ -376,6 +389,59 @@ def mark_surname_done(conn: sqlite3.Connection, cognome: str) -> None:
         (normalized,),
     )
     conn.commit()
+
+
+def normalize_queue_surnames(conn: sqlite3.Connection) -> int:
+    cursor = conn.execute(
+        """
+        SELECT cognome, stato, fonte, timestamp
+        FROM surnames_queue;
+        """
+    )
+    rows = cursor.fetchall()
+    changes = 0
+    for cognome, stato, fonte, timestamp in rows:
+        normalized = normalize_surname_prefix(cognome)
+        if not normalized or normalized == cognome:
+            continue
+        existing = conn.execute(
+            """
+            SELECT stato
+            FROM surnames_queue
+            WHERE cognome = ?;
+            """,
+            (normalized,),
+        ).fetchone()
+        if existing:
+            if stato == "pending" and existing[0] != "pending":
+                conn.execute(
+                    """
+                    UPDATE surnames_queue
+                    SET stato = "pending",
+                        timestamp = CURRENT_TIMESTAMP
+                    WHERE cognome = ?;
+                    """,
+                    (normalized,),
+                )
+        else:
+            conn.execute(
+                """
+                INSERT INTO surnames_queue (cognome, stato, fonte, timestamp)
+                VALUES (?, ?, ?, ?);
+                """,
+                (normalized, stato, fonte, timestamp),
+            )
+        conn.execute(
+            """
+            DELETE FROM surnames_queue
+            WHERE cognome = ?;
+            """,
+            (cognome,),
+        )
+        changes += 1
+    if changes:
+        conn.commit()
+    return changes
 
 
 def fetch_cached_triplette(
