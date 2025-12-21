@@ -61,6 +61,17 @@ def _init_db(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS known_names (
+            id INTEGER PRIMARY KEY,
+            nome TEXT NOT NULL,
+            fonte TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS queries (
             id INTEGER PRIMARY KEY,
             cognome TEXT NOT NULL,
@@ -86,6 +97,10 @@ def _init_db(conn: sqlite3.Connection) -> None:
     )
     _ensure_column(conn, "persons", "fonte", "TEXT")
     _ensure_column(conn, "persons", "hash_unico", "TEXT")
+    _ensure_column(conn, "known_names", "nome", "TEXT")
+    _ensure_column(conn, "known_names", "fonte", "TEXT")
+    _ensure_column(conn, "known_names", "created_at", "TEXT")
+    _ensure_column(conn, "known_names", "updated_at", "TEXT")
     _ensure_column(conn, "queries", "timestamp", "TEXT")
     _ensure_column(conn, "queries", "risultato_count", "INTEGER")
     _ensure_column(conn, "surnames_queue", "stato", "TEXT")
@@ -98,6 +113,10 @@ def _init_db(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS surnames_queue_stato_idx "
         "ON surnames_queue(stato);"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS known_names_nome_idx "
+        "ON known_names(nome);"
     )
     _backfill_hashes(conn)
     conn.commit()
@@ -146,6 +165,10 @@ def normalize_surname(cognome: str) -> str:
     return cognome.strip().title()
 
 
+def normalize_name(nome: str) -> str:
+    return nome.strip().title()
+
+
 def upsert_people(
     conn: sqlite3.Connection,
     rows: Iterable[Sequence[str]],
@@ -180,6 +203,44 @@ def upsert_people(
     )
     conn.commit()
     return len(payload)
+
+
+def upsert_names(
+    conn: sqlite3.Connection,
+    names: Iterable[str],
+    fonte: str,
+) -> int:
+    payload: List[Sequence[str]] = []
+    for name in names:
+        normalized = normalize_name(name)
+        if not normalized:
+            continue
+        payload.append((normalized, fonte))
+    if not payload:
+        return 0
+    conn.executemany(
+        """
+        INSERT INTO known_names (nome, fonte, created_at, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(nome) DO UPDATE SET
+            fonte = excluded.fonte,
+            updated_at = CURRENT_TIMESTAMP;
+        """,
+        payload,
+    )
+    conn.commit()
+    return len(payload)
+
+
+def fetch_known_names(conn: sqlite3.Connection) -> List[str]:
+    cursor = conn.execute(
+        """
+        SELECT nome
+        FROM known_names
+        ORDER BY nome;
+        """
+    )
+    return [row[0] for row in cursor.fetchall()]
 
 
 def record_query(
