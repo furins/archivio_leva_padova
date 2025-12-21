@@ -19,6 +19,7 @@ from libraries.storage import (
     mark_surname_done,
     normalize_surname,
     normalize_surname_prefix,
+    normalize_queue_surnames,
     query_exists,
     record_query,
     search_people,
@@ -235,6 +236,8 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
             return
     if args.queue_status:
         db_conn = connect_db(db_path)
+        if not args.force_exact:
+            normalize_queue_surnames(db_conn)
         names = [nome.lower() for nome in fetch_known_names(db_conn)]
         if not names:
             imported = load_names_from_file(DEFAULT_NOMI_FILE)
@@ -298,6 +301,8 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
     nuovi_nomi: Set[str] = set()
 
     if db_conn and args.surnames:
+        if not args.force_exact:
+            normalize_queue_surnames(db_conn)
         for raw_cognome in args.surnames:
             normalized = normalize_surname(raw_cognome)
             if normalized:
@@ -311,6 +316,8 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
     iterations = 0
     pending: List[str] = []
     if db_conn:
+        if not args.force_exact:
+            normalize_queue_surnames(db_conn)
         pending = fetch_pending_surnames(db_conn, args.batch_size)
 
     while pending:
@@ -320,8 +327,11 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
             break
 
         for cognome in pending:
+            normalized = normalize_surname(cognome)
             cognome_query = (
-                normalize_surname_prefix(cognome) if not args.force_exact else cognome
+                normalize_surname_prefix(normalized)
+                if not args.force_exact
+                else normalized
             )
             cached_triplette = set()
             if db_conn and not args.no_cache:
@@ -373,9 +383,9 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                 )
 
             results = (
-                fetch_people(db_conn, cognome, args.force_exact) if db_conn else []
+                fetch_people(db_conn, cognome_query, args.force_exact) if db_conn else []
             )
-            print_results(cognome, results)
+            print_results(cognome_query, results)
             combined.update(tuple(row) for row in results)
             nuovi_nomi.update(row[1].lower() for row in results if len(row) > 1 and row[1])
             if db_conn:
@@ -394,11 +404,11 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                         )
                 enqueue_mother_surnames(
                     db_conn,
-                    cognome,
+                    cognome_query,
                     results,
                     use_prefix=not args.force_exact,
                 )
-                mark_surname_done(db_conn, cognome)
+                mark_surname_done(db_conn, cognome_query, args.force_exact)
 
         pending = fetch_pending_surnames(db_conn, args.batch_size) if db_conn else []
 
