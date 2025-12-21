@@ -42,6 +42,101 @@ Questo progetto automatizza la consultazione dell'archivio di leva di Padova e R
 - Aggiornare automaticamente il dizionario dei nomi quando ne vengono trovati di nuovi.
 - Gestire una cache locale per evitare richieste ripetute al sito.
 
+## Opzioni della CLI
+
+Il comando principale è `leva-cli`. Ogni opzione è descritta qui sotto con un esempio d'uso.
+
+### Cognomi (argomenti posizionali)
+Permette di passare uno o più cognomi (o parti di essi) da cercare. Se non si fornisce nessun cognome è necessario usare `--config-env`, `--search` o `--queue-status`.
+
+```
+uv run leva-cli Rossi Bianchi
+```
+
+### `--no-cache`
+Disabilita la cache locale delle richieste. Utile se si sospetta che i dati sul sito siano stati aggiornati e si vuole forzare nuove interrogazioni.
+
+```
+uv run leva-cli Rossi --no-cache
+```
+
+### `-o`, `--output`
+Salva i risultati della sessione in un file TSV oltre a stamparli a video. La directory viene creata se non esiste.
+
+```
+uv run leva-cli Rossi --output risultati/rossi.tsv
+```
+
+### `--force-exact`
+Forza la ricerca sul cognome esatto (evita corrispondenze parziali).
+
+```
+uv run leva-cli "De Rossi" --force-exact
+```
+
+### `--aggiorna FILE`
+Aggiorna il file con l'elenco dei nomi noti aggiungendo quelli nuovi trovati durante la sessione. Se il file non esiste viene creato.
+
+```
+uv run leva-cli Rossi --aggiorna data/nomi.txt
+```
+
+### `--db`
+Specifica il percorso del database SQLite da usare per cache, deduplica e ricerche locali. Se non indicato viene usato `risultati/leva.sqlite`.
+
+```
+uv run leva-cli Rossi --db risultati/leva.sqlite
+```
+
+### `--search`
+Esegue una ricerca nel database locale usando una regexp. È utile per filtrare risultati già scaricati senza interrogare il server.
+
+```
+uv run leva-cli --search "Francesco"
+```
+
+### `--search-fields`
+Limita i campi su cui applicare la regexp di `--search`. I campi vanno separati da virgola e possono essere ad esempio `cognome,nome,localita`.
+
+```
+uv run leva-cli --search "Francesco" --search-fields "nome,cognome"
+```
+
+### `--search-limit`
+Limita il numero di risultati restituiti dalla ricerca locale (`--search`).
+
+```
+uv run leva-cli --search "Rossi" --search-limit 20
+```
+
+### `--config-env`
+Avvia una procedura guidata per impostare username e password in `.envrc`. Se sono già presenti vengono proposti come default.
+
+```
+uv run leva-cli --config-env
+```
+
+### `--queue-status`
+Mostra l'elenco dei cognomi noti e lo stato delle interrogazioni in coda (utile per vedere cosa è già stato processato).
+
+```
+uv run leva-cli --queue-status
+```
+
+### `--batch-size`
+Numero massimo di cognomi da processare per iterazione della coda quando si lanciano più cognomi insieme. Il valore predefinito è 10.
+
+```
+uv run leva-cli Rossi Bianchi Verdi --batch-size 5
+```
+
+### `--max-iterations`
+Numero massimo di iterazioni della coda per evitare loop infiniti. Il valore predefinito è 100.
+
+```
+uv run leva-cli Rossi Bianchi --max-iterations 50
+```
+
 ## Algoritmo di ricerca ottimizzato
 
 Il programma riduce le richieste al server combinando cache locale e inferenza sulle triplette (sequenze di tre lettere). L'idea è che alcune triplette compaiono **sempre** negli stessi nomi (o in un sottoinsieme) rispetto ad altre: se una tripla è già stata interrogata e copre tutte le occorrenze di un'altra, la seconda richiesta può essere evitata perché i risultati sono già noti.
