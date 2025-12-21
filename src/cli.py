@@ -10,7 +10,7 @@ def parse_args():
     parser.add_argument(
         "surnames",
         nargs="*",
-        help="Cognomi (o parti di essi) da cercare",
+        help="Cognomi (o parti di essi) da cercare; in coda usa la tripletta iniziale",
     )
     parser.add_argument(
         "--no-cache",
@@ -25,7 +25,7 @@ def parse_args():
     parser.add_argument(
         "--force-exact",
         action="store_true",
-        help="Forza la ricerca sul cognome esatto",
+        help="Forza la ricerca sul cognome esatto (non usa la tripletta iniziale)",
     )
     parser.add_argument(
         "--import-names",
