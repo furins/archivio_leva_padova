@@ -11,6 +11,7 @@ from libraries.storage import (
     connect_db,
     fetch_cached_triplette,
     fetch_people,
+    normalize_surname_prefix,
     query_exists,
     record_query,
     upsert_people,
@@ -217,15 +218,26 @@ class RicercaLeva:
         cached_triplette = set()
         try:
             if db_conn:
+                cognome = self.cognome.strip()
+                cognome_query = (
+                    normalize_surname_prefix(cognome)
+                    if not self.cognome_esatto
+                    else cognome
+                )
                 cached_triplette = fetch_cached_triplette(
                     db_conn,
-                    self.cognome.strip(),
+                    cognome_query,
                     self.cognome_esatto,
                 )
             for tripletta, conteggio in self.triplette.lista.items():
                 idx += 1
                 cognome = self.cognome.strip()
-                if db_conn and query_exists(db_conn, cognome, tripletta, self.cognome_esatto):
+                cognome_query = (
+                    normalize_surname_prefix(cognome)
+                    if not self.cognome_esatto
+                    else cognome
+                )
+                if db_conn and query_exists(db_conn, cognome_query, tripletta, self.cognome_esatto):
                     print(
                         f"[{idx:{lunghezza_str}}/{totale}]{cognome} {tripletta} (cache)"
                     )
@@ -239,7 +251,7 @@ class RicercaLeva:
                     )
                     continue
                 risultati = connessione.query(
-                    cognome,
+                    cognome_query,
                     tripletta,
                     cognome_esatto=self.cognome_esatto
                 )
@@ -252,7 +264,7 @@ class RicercaLeva:
                     upsert_people(db_conn, formatted, fonte="leva_padova")
                     record_query(
                         db_conn,
-                        cognome,
+                        cognome_query,
                         tripletta,
                         self.cognome_esatto,
                         len(risultati),

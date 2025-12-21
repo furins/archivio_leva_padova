@@ -18,6 +18,7 @@ from libraries.storage import (
     fetch_people,
     mark_surname_done,
     normalize_surname,
+    normalize_surname_prefix,
     query_exists,
     record_query,
     search_people,
@@ -319,11 +320,14 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
             break
 
         for cognome in pending:
+            cognome_query = (
+                normalize_surname_prefix(cognome) if not args.force_exact else cognome
+            )
             cached_triplette = set()
             if db_conn and not args.no_cache:
                 cached_triplette = fetch_cached_triplette(
                     db_conn,
-                    cognome,
+                    cognome_query,
                     args.force_exact,
                 )
             connessione = None
@@ -331,7 +335,7 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
             width = len(str(total_triplette))
             for idx, tripletta in enumerate(triplette.lista.keys(), start=1):
                 if db_conn and not args.no_cache:
-                    if query_exists(db_conn, cognome, tripletta, args.force_exact):
+                    if query_exists(db_conn, cognome_query, tripletta, args.force_exact):
                         cached_triplette.add(tripletta)
                         print(
                             f"[{idx:{width}}/{total_triplette}] "
@@ -348,7 +352,7 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                 if connessione is None:
                     connessione = LevaPadova()
                 risultati = connessione.query(
-                    cognome,
+                    cognome_query,
                     tripletta,
                     cognome_esatto=args.force_exact,
                 )
@@ -357,7 +361,7 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                     upsert_people(db_conn, formatted, fonte="leva_padova")
                     record_query(
                         db_conn,
-                        cognome,
+                        cognome_query,
                         tripletta,
                         args.force_exact,
                         len(risultati),
