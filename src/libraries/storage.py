@@ -533,6 +533,7 @@ def fetch_people(
         clause = "SOUNDEX_IT(cognome) = SOUNDEX_IT(?)"
         param = normalized
     else:
+        normalized = normalize_surname(cognome)
         clause = "cognome LIKE ?"
         param = f"%{normalized}%"
     conn.row_factory = sqlite3.Row
