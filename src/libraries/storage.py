@@ -350,6 +350,11 @@ def count_query_triplette(
     cognome: str,
     cognome_esatto: bool,
 ) -> int:
+    normalized = (
+        normalize_surname(cognome)
+        if cognome_esatto
+        else normalize_surname_prefix(cognome)
+    )
     cursor = conn.execute(
         """
         SELECT COUNT(*)
@@ -357,23 +362,37 @@ def count_query_triplette(
         WHERE cognome = ?
           AND cognome_esatto = ?;
         """,
-        (normalize_surname(cognome), int(bool(cognome_esatto))),
+        (normalized, int(bool(cognome_esatto))),
     )
     return int(cursor.fetchone()[0])
 
 
-def mark_surname_done(conn: sqlite3.Connection, cognome: str) -> None:
-    normalized = normalize_surname(cognome)
+def mark_surname_done(
+    conn: sqlite3.Connection,
+    cognome: str,
+    cognome_esatto: bool,
+) -> None:
+    normalized = (
+        normalize_surname(cognome)
+        if cognome_esatto
+        else normalize_surname_prefix(cognome)
+    )
     if not normalized:
         return
+    if cognome_esatto:
+        clause = "cognome = ?"
+        params = (normalized,)
+    else:
+        clause = "cognome = ? OR cognome LIKE ?"
+        params = (normalized, f"{normalized}%")
     conn.execute(
-        """
+        f"""
         UPDATE surnames_queue
         SET stato = "done",
             timestamp = CURRENT_TIMESTAMP
-        WHERE cognome = ?;
+        WHERE {clause};
         """,
-        (normalized,),
+        params,
     )
     conn.commit()
 

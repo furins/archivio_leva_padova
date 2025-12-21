@@ -372,8 +372,9 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                     f"{cognome} {tripletta} {len(risultati)}"
                 )
 
+            cognome_lookup = cognome if args.force_exact else cognome_query
             results = (
-                fetch_people(db_conn, cognome, args.force_exact) if db_conn else []
+                fetch_people(db_conn, cognome_lookup, args.force_exact) if db_conn else []
             )
             print_results(cognome, results)
             combined.update(tuple(row) for row in results)
@@ -398,7 +399,7 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                     results,
                     use_prefix=not args.force_exact,
                 )
-                mark_surname_done(db_conn, cognome)
+                mark_surname_done(db_conn, cognome_query, args.force_exact)
 
         pending = fetch_pending_surnames(db_conn, args.batch_size) if db_conn else []
 
