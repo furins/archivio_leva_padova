@@ -74,6 +74,14 @@ Forza la ricerca sul cognome esatto (evita corrispondenze parziali).
 uv run leva-cli "De Rossi" --force-exact
 ```
 
+### `--surname-match`
+Imposta la modalità di ricerca del cognome: `partial` (default), `exact` o `soundex`. È un'alternativa a `--force-exact`.
+
+```
+uv run leva-cli "De Rossi" --surname-match exact
+uv run leva-cli Rossi --surname-match soundex
+```
+
 ### `--import-names FILE`
 Importa un elenco iniziale di nomi nel database. Il file serve solo come base iniziale: dopo l'import, il database diventa l'unica fonte dei nomi e si aggiorna automaticamente.
 

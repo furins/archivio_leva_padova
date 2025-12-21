@@ -28,6 +28,11 @@ def parse_args():
         help="Forza la ricerca sul cognome esatto (non usa la tripletta iniziale)",
     )
     parser.add_argument(
+        "--surname-match",
+        choices=("partial", "exact", "soundex"),
+        help="Modalità di ricerca cognome: partial, exact o soundex (default: partial)",
+    )
+    parser.add_argument(
         "--import-names",
         metavar="FILE",
         help="Importa un elenco iniziale di nomi nel database (solo su richiesta)",
@@ -77,6 +82,8 @@ def parse_args():
         help="Numero massimo di iterazioni della coda per evitare loop infiniti",
     )
     args = parser.parse_args()
+    if args.force_exact and args.surname_match:
+        parser.error("Usare --force-exact oppure --surname-match, non entrambi")
     if (
         not args.surnames
         and not args.config_env
