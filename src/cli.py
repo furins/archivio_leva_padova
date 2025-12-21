@@ -1,18 +1,24 @@
 import argparse
-import json
 import os
 import sqlite3
 from getpass import getpass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from libraries.database import FIELDS, connect_db, insert_people, search_people
-from libraries.leva_padova import RicercaLeva
+from libraries.leva_padova import LevaPadova
 from libraries.secrets import PASSWORD_ENV, USERNAME_ENV
+from libraries.storage import (
+    DATA_FIELDS,
+    connect_db,
+    fetch_people,
+    query_exists,
+    record_query,
+    search_people,
+    upsert_people,
+)
 from libraries.triplette import Triplette
 
 DEFAULT_NOMI_FILE = Path("data/nomi.txt")
-CACHE_FILE = Path("risultati/cache.json")
 DEFAULT_DB_FILE = Path("risultati/leva.sqlite")
 ENVRC_PATH = Path(".envrc")
 HEADER = (
@@ -89,26 +95,6 @@ def parse_args():
     return args
 
 
-def load_cache(path: Path) -> Dict[str, List[List[str]]]:
-    if not path.exists():
-        return {}
-    try:
-        with path.open() as fh:
-            return json.load(fh)
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
-def save_cache(path: Path, cache: Dict[str, List[List[str]]]):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w") as fh:
-        json.dump(cache, fh)
-
-
-def cache_key(cognome: str, cognome_esatto: bool) -> str:
-    return f"{cognome.strip().lower()}|{int(bool(cognome_esatto))}"
-
-
 def sort_rows(rows: Iterable[Sequence[str]]) -> List[List[str]]:
     ordered = [list(row) for row in rows]
     ordered.sort(key=lambda x: (x[3], x[1], x[0]))
@@ -129,7 +115,7 @@ def print_results(cognome: str, rows: Iterable[Sequence[str]]):
 def print_search_results(rows: Iterable[sqlite3.Row]):
     print("\t".join(HEADER))
     for row in rows:
-        values = [row[field] or "" for field in FIELDS]
+        values = [row[field] or "" for field in DATA_FIELDS]
         print("\t".join(values))
 
 
@@ -255,6 +241,23 @@ def parse_search_fields(raw_fields: Optional[str]) -> Optional[List[str]]:
     return [field.strip() for field in raw_fields.split(",") if field.strip()]
 
 
+def format_result_row(raw_row: Sequence[object]) -> Tuple[str, ...]:
+    def normalize(value: object) -> str:
+        return "" if value is None else str(value)
+
+    return (
+        normalize(raw_row[0]),
+        normalize(raw_row[1]),
+        normalize(raw_row[3])[:10],
+        normalize(raw_row[4]),
+        normalize(raw_row[5]),
+        normalize(raw_row[7]),
+        normalize(raw_row[8]),
+        normalize(raw_row[9]),
+        normalize(raw_row[10]),
+    )
+
+
 def main():
     args = parse_args()
     if args.config_env:
@@ -276,8 +279,6 @@ def main():
             return
     names_file = Path(args.aggiorna) if args.aggiorna else DEFAULT_NOMI_FILE
     triplette = Triplette(str(names_file))
-    cache = {} if args.no_cache else load_cache(CACHE_FILE)
-    cache_dirty = False
     combined: Set[Tuple[str, ...]] = set()
     nuovi_nomi: Set[str] = set()
     existing_names = read_names_file(names_file) if args.aggiorna else set()
@@ -286,29 +287,41 @@ def main():
         cognome = raw_cognome.strip()
         if not cognome:
             continue
-        key = cache_key(cognome, args.force_exact)
-        if not args.no_cache and key in cache:
-            results = cache[key]
-            print(f"Uso la cache per {cognome}")
+        missing_triplette: List[str] = []
+        if db_conn and not args.no_cache:
+            for tripletta in triplette.lista.keys():
+                if not query_exists(db_conn, cognome, tripletta, args.force_exact):
+                    missing_triplette.append(tripletta)
         else:
-            ricerca = RicercaLeva(
-                cognome=cognome,
-                triplette=triplette,
-                cognome_esatto=args.force_exact,
-            )
-            ricerca.search(dump=False)
-            results = sort_rows(ricerca.ricerche)
-            if not args.no_cache:
-                cache[key] = results
-                cache_dirty = True
+            missing_triplette = list(triplette.lista.keys())
+
+        if missing_triplette and db_conn:
+            connessione = LevaPadova()
+            total_triplette = len(missing_triplette)
+            width = len(str(total_triplette))
+            for idx, tripletta in enumerate(missing_triplette, start=1):
+                risultati = connessione.query(
+                    cognome,
+                    tripletta,
+                    cognome_esatto=args.force_exact,
+                )
+                formatted = [format_result_row(row) for row in risultati]
+                upsert_people(db_conn, formatted, fonte="leva_padova")
+                record_query(
+                    db_conn,
+                    cognome,
+                    tripletta,
+                    args.force_exact,
+                    len(risultati),
+                )
+                print(f"[{idx:{width}}/{total_triplette}] {cognome} {tripletta} {len(risultati)}")
+
+        results = (
+            fetch_people(db_conn, cognome, args.force_exact) if db_conn else []
+        )
         print_results(cognome, results)
-        if db_conn:
-            insert_people(db_conn, results)
         combined.update(tuple(row) for row in results)
         nuovi_nomi.update(row[1].lower() for row in results if len(row) > 1 and row[1])
-
-    if not args.no_cache and cache_dirty:
-        save_cache(CACHE_FILE, cache)
 
     if args.output:
         write_results(args.output, combined)
