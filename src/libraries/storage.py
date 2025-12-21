@@ -165,6 +165,13 @@ def normalize_surname(cognome: str) -> str:
     return cognome.strip().title()
 
 
+def normalize_surname_prefix(cognome: str) -> str:
+    normalized = normalize_surname(cognome)
+    if not normalized:
+        return ""
+    return normalized[:3]
+
+
 def normalize_name(nome: str) -> str:
     return nome.strip().title()
 
@@ -294,8 +301,9 @@ def enqueue_surname(
     cognome: str,
     fonte: str,
     stato: str = "pending",
+    use_prefix: bool = True,
 ) -> None:
-    normalized = normalize_surname(cognome)
+    normalized = normalize_surname_prefix(cognome) if use_prefix else normalize_surname(cognome)
     if not normalized:
         return
     conn.execute(

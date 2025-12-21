@@ -201,12 +201,18 @@ def enqueue_mother_surnames(
     conn: sqlite3.Connection,
     cognome_fonte: str,
     rows: Iterable[sqlite3.Row],
+    use_prefix: bool = True,
 ) -> None:
     for row in rows:
         madre = row["madre"] if isinstance(row, sqlite3.Row) else row[-1]
         mother_surname = parse_mother_surname(madre)
         if mother_surname:
-            enqueue_surname(conn, mother_surname, fonte=f"madre:{cognome_fonte}")
+            enqueue_surname(
+                conn,
+                mother_surname,
+                fonte=f"madre:{cognome_fonte}",
+                use_prefix=use_prefix,
+            )
 
 
 def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_FILE):
@@ -294,7 +300,12 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
         for raw_cognome in args.surnames:
             normalized = normalize_surname(raw_cognome)
             if normalized:
-                enqueue_surname(db_conn, normalized, fonte="cli")
+                enqueue_surname(
+                    db_conn,
+                    normalized,
+                    fonte="cli",
+                    use_prefix=not args.force_exact,
+                )
 
     iterations = 0
     pending: List[str] = []
@@ -364,7 +375,12 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
             combined.update(tuple(row) for row in results)
             nuovi_nomi.update(row[1].lower() for row in results if len(row) > 1 and row[1])
             if db_conn:
-                enqueue_mother_surnames(db_conn, cognome, results)
+                enqueue_mother_surnames(
+                    db_conn,
+                    cognome,
+                    results,
+                    use_prefix=not args.force_exact,
+                )
                 mark_surname_done(db_conn, cognome)
 
         pending = fetch_pending_surnames(db_conn, args.batch_size) if db_conn else []
