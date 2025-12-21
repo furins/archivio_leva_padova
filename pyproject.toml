@@ -8,8 +8,20 @@ version = "0.0.2"
 authors = [{ name = "Uberdev", email = "uber@yomama.com" }]
 description = "Scraper for the military conscription archives of Padua and Rovigo provinces, Veneto, Italy"
 readme = "README.md"
-dependencies = ["cachetools", "requests", "loguru"]
+dependencies = [
+    "cachetools",
+ "requests",
+ "loguru",
+ "beautifulsoup4>=4.14.3",
+]
 requires-python = ">=3.13"
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["cli"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [project.scripts]
-conscraper = "src.cli:main"
+leva-cli = "cli:main"

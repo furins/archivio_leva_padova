@@ -1,13 +1,17 @@
 import argparse
 import json
+import os
+from getpass import getpass
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Set, Tuple
 
 from libraries.leva_padova import RicercaLeva
+from libraries.secrets import PASSWORD_ENV, USERNAME_ENV
 from libraries.triplette import Triplette
 
 DEFAULT_NOMI_FILE = Path("data/nomi.txt")
 CACHE_FILE = Path("risultati/cache.json")
+ENVRC_PATH = Path(".envrc")
 HEADER = (
     "Cognome",
     "Nome",
@@ -19,6 +23,10 @@ HEADER = (
     "Padre",
     "Madre",
 )
+ENV_VARIABLES = (
+    (USERNAME_ENV, False),
+    (PASSWORD_ENV, True),
+)
 
 
 def parse_args():
@@ -27,7 +35,7 @@ def parse_args():
     )
     parser.add_argument(
         "surnames",
-        nargs="+",
+        nargs="*",
         help="Cognomi (o parti di essi) da cercare",
     )
     parser.add_argument(
@@ -50,7 +58,15 @@ def parse_args():
         metavar="FILE",
         help="Aggiorna il file con tutti i nomi noti aggiungendo quelli nuovi",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--config-env",
+        action="store_true",
+        help="Configura interattivamente le variabili in .envrc",
+    )
+    args = parser.parse_args()
+    if not args.surnames and not args.config_env:
+        parser.error("Specificare almeno un cognome oppure usare --config-env")
+    return args
 
 
 def load_cache(path: Path) -> Dict[str, List[List[str]]]:
@@ -126,8 +142,92 @@ def update_names_file(path: Path, existing: Set[str], names: Set[str]):
     print(f"Aggiunti {len(nuovi)} nuovi nomi al file {path}")
 
 
+def read_envrc_values(path: Path) -> Dict[str, str]:
+    valori: Dict[str, str] = {}
+    if not path.exists():
+        return valori
+    with path.open() as fh:
+        for raw_line in fh:
+            line = raw_line.strip()
+            if not line.startswith("export "):
+                continue
+            contenuto = line[len("export "):]
+            if "=" not in contenuto:
+                continue
+            var_name, raw_value = contenuto.split("=", 1)
+            var_name = var_name.strip()
+            raw_value = raw_value.strip()
+            if raw_value and raw_value[0] in {'"', "'"} and raw_value[-1] == raw_value[0]:
+                raw_value = raw_value[1:-1]
+            raw_value = raw_value.replace('\\"', '"')
+            valori[var_name] = raw_value
+    return valori
+
+
+def format_env_line(var_name: str, value: str) -> str:
+    escaped = value.replace('"', '\\"')
+    return f'export {var_name}="{escaped}"'
+
+
+def write_envrc_values(path: Path, values: Dict[str, str]):
+    lines: List[str] = []
+    if path.exists():
+        lines = path.read_text().splitlines()
+    aggiornati: Set[str] = set()
+    for idx, raw_line in enumerate(lines):
+        stripped = raw_line.strip()
+        if not stripped.startswith("export "):
+            continue
+        contenuto = stripped[len("export "):]
+        if "=" not in contenuto:
+            continue
+        var_name = contenuto.split("=", 1)[0].strip()
+        if var_name in values:
+            lines[idx] = format_env_line(var_name, values[var_name])
+            aggiornati.add(var_name)
+    for var_name, value in values.items():
+        if var_name not in aggiornati:
+            lines.append(format_env_line(var_name, value))
+    text = "\n".join(lines)
+    if text and not text.endswith("\n"):
+        text += "\n"
+    with path.open("w") as fh:
+        fh.write(text)
+
+
+def prompt_env_value(var_name: str, current: str, secret: bool) -> str:
+    while True:
+        default_hint = f" [{current}]" if current else ""
+        prompt = f"{var_name}{default_hint}: "
+        raw = getpass(prompt) if secret else input(prompt)
+        raw = raw.strip()
+        if not raw:
+            if current:
+                return current
+            print("Il valore non può essere vuoto.")
+            continue
+        return raw
+
+
+def configure_envrc(path: Path):
+    print(f"Configurazione delle variabili in {path}")
+    existing = read_envrc_values(path)
+    nuovi_valori: Dict[str, str] = {}
+    for var_name, is_secret in ENV_VARIABLES:
+        current = existing.get(var_name, "")
+        nuovi_valori[var_name] = prompt_env_value(var_name, current, secret=is_secret)
+    write_envrc_values(path, nuovi_valori)
+    for var_name, value in nuovi_valori.items():
+        os.environ[var_name] = value
+    print(f"Variabili salvate in {path}. Esegui 'direnv allow' per ricaricarle.")
+
+
 def main():
     args = parse_args()
+    if args.config_env:
+        configure_envrc(ENVRC_PATH)
+        if not args.surnames:
+            return
     names_file = Path(args.aggiorna) if args.aggiorna else DEFAULT_NOMI_FILE
     triplette = Triplette(str(names_file))
     cache = {} if args.no_cache else load_cache(CACHE_FILE)
