@@ -1,24 +1,27 @@
 import collections
-from typing import Dict, List, Optional, Set
+from typing import Dict, Iterable, List, Optional, Set
 
 
 class Triplette:
     lista = {}
 
-    def __init__(self, filename):
+    def __init__(self, names: Iterable[str]):
         risultati: List[str] = []
         triplette_per_nome: List[Set[str]] = []
-        with open(filename) as f:
-            for name in f.readlines():
-                name = name.strip()
-                if not name:
-                    continue
-                triplette = [name[x:x+3] for x in range(len(name)-2)]
-                risultati.extend(triplette)
-                triplette_per_nome.append(set(triplette))
+        for raw_name in names:
+            name = raw_name.strip()
+            if not name:
+                continue
+            triplette = [name[x:x + 3] for x in range(len(name) - 2)]
+            risultati.extend(triplette)
+            triplette_per_nome.append(set(triplette))
         c = collections.Counter(risultati)
         self.lista = dict(sorted(c.items(), key=lambda x: x[1], reverse=True))
         self._copertura = self._build_coverage(triplette_per_nome)
+
+    @classmethod
+    def from_names(cls, names: Iterable[str]) -> "Triplette":
+        return cls(names)
 
     def save(self, filename):
         with open(filename, 'w') as f:

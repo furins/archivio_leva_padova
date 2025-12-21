@@ -13,6 +13,7 @@ from libraries.storage import (
     count_query_triplette,
     enqueue_surname,
     fetch_cached_triplette,
+    fetch_known_names,
     fetch_known_surnames,
     fetch_pending_surnames,
     fetch_people,
@@ -167,6 +168,10 @@ def read_names_file(path: Path) -> Set[str]:
     return names
 
 
+def read_names_db(conn: sqlite3.Connection) -> List[str]:
+    return [nome.lower() for nome in fetch_known_names(conn)]
+
+
 def update_names_file(path: Path, existing: Set[str], names: Set[str]):
     nuovi = sorted(nome for nome in names if nome and nome not in existing)
     if not nuovi:
@@ -305,7 +310,10 @@ def main():
     if args.queue_status:
         db_conn = connect_db(db_path)
         names_file = Path(args.aggiorna) if args.aggiorna else DEFAULT_NOMI_FILE
-        total_triplette = len(Triplette(str(names_file)).lista)
+        names = read_names_db(db_conn)
+        if not names:
+            names = list(read_names_file(names_file))
+        total_triplette = len(Triplette(names).lista)
         known = fetch_known_surnames(db_conn)
         full = 0
         partial = 0
@@ -332,7 +340,10 @@ def main():
         if not args.surnames and not args.search:
             return
     names_file = Path(args.aggiorna) if args.aggiorna else DEFAULT_NOMI_FILE
-    triplette = Triplette(str(names_file))
+    names = read_names_db(db_conn) if db_conn else []
+    if not names:
+        names = list(read_names_file(names_file))
+    triplette = Triplette(names)
     if args.search and db_conn:
         fields = parse_search_fields(args.search_fields)
         results = search_people(
