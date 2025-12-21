@@ -22,6 +22,7 @@ from libraries.storage import (
     query_exists,
     record_query,
     search_people,
+    upsert_names,
     upsert_people,
 )
 from libraries.triplette import Triplette
@@ -71,9 +72,9 @@ def parse_args():
         help="Forza la ricerca sul cognome esatto",
     )
     parser.add_argument(
-        "--aggiorna",
+        "--import-names",
         metavar="FILE",
-        help="Aggiorna il file con tutti i nomi noti aggiungendo quelli nuovi",
+        help="Importa un elenco iniziale di nomi nel database (solo su richiesta)",
     )
     parser.add_argument(
         "--db",
@@ -115,7 +116,13 @@ def parse_args():
         help="Numero massimo di iterazioni della coda per evitare loop infiniti",
     )
     args = parser.parse_args()
-    if not args.surnames and not args.config_env and not args.search and not args.queue_status:
+    if (
+        not args.surnames
+        and not args.config_env
+        and not args.search
+        and not args.queue_status
+        and not args.import_names
+    ):
         parser.error("Specificare almeno un cognome oppure usare --config-env")
     return args
 
@@ -156,7 +163,7 @@ def write_results(path: str, results: Iterable[Sequence[str]]):
             fh.write("\n")
 
 
-def read_names_file(path: Path) -> Set[str]:
+def load_names_from_file(path: Path) -> Set[str]:
     names: Set[str] = set()
     if not path.exists():
         return names
@@ -164,24 +171,8 @@ def read_names_file(path: Path) -> Set[str]:
         for line in fh:
             nome = line.strip()
             if nome:
-                names.add(nome.lower())
+                names.add(nome)
     return names
-
-
-def read_names_db(conn: sqlite3.Connection) -> List[str]:
-    return [nome.lower() for nome in fetch_known_names(conn)]
-
-
-def update_names_file(path: Path, existing: Set[str], names: Set[str]):
-    nuovi = sorted(nome for nome in names if nome and nome not in existing)
-    if not nuovi:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a") as fh:
-        for nome in nuovi:
-            fh.write(f"{nome}\n")
-    existing.update(nuovi)
-    print(f"Aggiunti {len(nuovi)} nuovi nomi al file {path}")
 
 
 def read_envrc_values(path: Path) -> Dict[str, str]:
@@ -307,12 +298,28 @@ def main():
             return
     db_path = Path(args.db) if args.db else DEFAULT_DB_FILE
     db_conn = connect_db(db_path) if (args.surnames or args.search) else None
+    if args.import_names:
+        if db_conn is None:
+            db_conn = connect_db(db_path)
+        names_file = Path(args.import_names)
+        imported = load_names_from_file(names_file)
+        count = upsert_names(db_conn, imported, fonte="import")
+        print(f"Importati {count} nomi da {names_file}")
+        if not args.surnames and not args.search and not args.queue_status:
+            db_conn.close()
+            return
     if args.queue_status:
         db_conn = connect_db(db_path)
-        names_file = Path(args.aggiorna) if args.aggiorna else DEFAULT_NOMI_FILE
-        names = read_names_db(db_conn)
+        names = [nome.lower() for nome in fetch_known_names(db_conn)]
         if not names:
-            names = list(read_names_file(names_file))
+            imported = load_names_from_file(DEFAULT_NOMI_FILE)
+            if imported:
+                upsert_names(db_conn, imported, fonte="import")
+                names = [nome.lower() for nome in fetch_known_names(db_conn)]
+        if not names:
+            print("Nessun nome disponibile nel database. Usa --import-names per inizializzare.")
+            db_conn.close()
+            return
         total_triplette = len(Triplette(names).lista)
         known = fetch_known_surnames(db_conn)
         full = 0
@@ -339,10 +346,17 @@ def main():
         db_conn.close()
         if not args.surnames and not args.search:
             return
-    names_file = Path(args.aggiorna) if args.aggiorna else DEFAULT_NOMI_FILE
-    names = read_names_db(db_conn) if db_conn else []
+    names = [nome.lower() for nome in fetch_known_names(db_conn)] if db_conn else []
+    if not names and db_conn:
+        imported = load_names_from_file(DEFAULT_NOMI_FILE)
+        if imported:
+            upsert_names(db_conn, imported, fonte="import")
+            names = [nome.lower() for nome in fetch_known_names(db_conn)]
     if not names:
-        names = list(read_names_file(names_file))
+        print("Nessun nome disponibile nel database. Usa --import-names per inizializzare.")
+        if db_conn:
+            db_conn.close()
+        return
     triplette = Triplette(names)
     if args.search and db_conn:
         fields = parse_search_fields(args.search_fields)
@@ -357,7 +371,6 @@ def main():
             return
     combined: Set[Tuple[str, ...]] = set()
     nuovi_nomi: Set[str] = set()
-    existing_names = read_names_file(names_file) if args.aggiorna else set()
 
     if db_conn and args.surnames:
         for raw_cognome in args.surnames:
@@ -441,8 +454,8 @@ def main():
     if args.output:
         write_results(args.output, combined)
 
-    if args.aggiorna and nuovi_nomi:
-        update_names_file(names_file, existing_names, nuovi_nomi)
+    if db_conn and nuovi_nomi:
+        upsert_names(db_conn, nuovi_nomi, fonte="leva_padova")
     if db_conn:
         db_conn.close()
 
