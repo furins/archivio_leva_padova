@@ -525,11 +525,11 @@ def fetch_people(
     cognome: str,
     match_mode: str,
 ) -> List[sqlite3.Row]:
+    normalized = normalize_surname(cognome)
     if match_mode == "exact":
-        clause = "LOWER(TRIM(cognome)) = LOWER(TRIM(?))"
-        param = cognome.strip()
+        clause = "cognome = ?"
+        param = normalized
     elif match_mode == "soundex":
-        normalized = normalize_surname(cognome)
         clause = "SOUNDEX_IT(cognome) = SOUNDEX_IT(?)"
         param = normalized
     else:
