@@ -1,16 +1,19 @@
 import argparse
 import json
 import os
+import sqlite3
 from getpass import getpass
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+from libraries.database import FIELDS, connect_db, insert_people, search_people
 from libraries.leva_padova import RicercaLeva
 from libraries.secrets import PASSWORD_ENV, USERNAME_ENV
 from libraries.triplette import Triplette
 
 DEFAULT_NOMI_FILE = Path("data/nomi.txt")
 CACHE_FILE = Path("risultati/cache.json")
+DEFAULT_DB_FILE = Path("risultati/leva.sqlite")
 ENVRC_PATH = Path(".envrc")
 HEADER = (
     "Cognome",
@@ -59,12 +62,29 @@ def parse_args():
         help="Aggiorna il file con tutti i nomi noti aggiungendo quelli nuovi",
     )
     parser.add_argument(
+        "--db",
+        help="Percorso del database SQLite per salvare e interrogare i risultati",
+    )
+    parser.add_argument(
+        "--search",
+        help="Esegue una ricerca nel database con regexp sui campi indicati",
+    )
+    parser.add_argument(
+        "--search-fields",
+        help="Campi su cui applicare la regexp (separati da virgola)",
+    )
+    parser.add_argument(
+        "--search-limit",
+        type=int,
+        help="Limita il numero di risultati della ricerca nel database",
+    )
+    parser.add_argument(
         "--config-env",
         action="store_true",
         help="Configura interattivamente le variabili in .envrc",
     )
     args = parser.parse_args()
-    if not args.surnames and not args.config_env:
+    if not args.surnames and not args.config_env and not args.search:
         parser.error("Specificare almeno un cognome oppure usare --config-env")
     return args
 
@@ -104,6 +124,13 @@ def print_results(cognome: str, rows: Iterable[Sequence[str]]):
     print("\t".join(HEADER))
     for row in ordered:
         print("\t".join(row))
+
+
+def print_search_results(rows: Iterable[sqlite3.Row]):
+    print("\t".join(HEADER))
+    for row in rows:
+        values = [row[field] or "" for field in FIELDS]
+        print("\t".join(values))
 
 
 def write_results(path: str, results: Iterable[Sequence[str]]):
@@ -222,10 +249,29 @@ def configure_envrc(path: Path):
     print(f"Variabili salvate in {path}. Esegui 'direnv allow' per ricaricarle.")
 
 
+def parse_search_fields(raw_fields: Optional[str]) -> Optional[List[str]]:
+    if not raw_fields:
+        return None
+    return [field.strip() for field in raw_fields.split(",") if field.strip()]
+
+
 def main():
     args = parse_args()
     if args.config_env:
         configure_envrc(ENVRC_PATH)
+        if not args.surnames:
+            return
+    db_path = Path(args.db) if args.db else DEFAULT_DB_FILE
+    db_conn = connect_db(db_path) if (args.surnames or args.search) else None
+    if args.search and db_conn:
+        fields = parse_search_fields(args.search_fields)
+        results = search_people(
+            db_conn,
+            args.search,
+            fields=fields,
+            limit=args.search_limit,
+        )
+        print_search_results(results)
         if not args.surnames:
             return
     names_file = Path(args.aggiorna) if args.aggiorna else DEFAULT_NOMI_FILE
@@ -256,6 +302,8 @@ def main():
                 cache[key] = results
                 cache_dirty = True
         print_results(cognome, results)
+        if db_conn:
+            insert_people(db_conn, results)
         combined.update(tuple(row) for row in results)
         nuovi_nomi.update(row[1].lower() for row in results if len(row) > 1 and row[1])
 
@@ -267,6 +315,8 @@ def main():
 
     if args.aggiorna and nuovi_nomi:
         update_names_file(names_file, existing_names, nuovi_nomi)
+    if db_conn:
+        db_conn.close()
 
 
 if __name__ == "__main__":
