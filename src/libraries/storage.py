@@ -205,6 +205,23 @@ def query_exists(
     return cursor.fetchone() is not None
 
 
+def fetch_cached_triplette(
+    conn: sqlite3.Connection,
+    cognome: str,
+    cognome_esatto: bool,
+) -> set[str]:
+    cursor = conn.execute(
+        """
+        SELECT nome_triplette
+        FROM queries
+        WHERE cognome = ?
+          AND cognome_esatto = ?;
+        """,
+        (cognome, int(bool(cognome_esatto))),
+    )
+    return {row[0] for row in cursor.fetchall()}
+
+
 def fetch_people(
     conn: sqlite3.Connection,
     cognome: str,

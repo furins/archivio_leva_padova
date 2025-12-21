@@ -10,6 +10,7 @@ from libraries.secrets import PASSWORD_ENV, USERNAME_ENV
 from libraries.storage import (
     DATA_FIELDS,
     connect_db,
+    fetch_cached_triplette,
     fetch_people,
     query_exists,
     record_query,
@@ -287,25 +288,38 @@ def main():
         cognome = raw_cognome.strip()
         if not cognome:
             continue
-        missing_triplette: List[str] = []
+        cached_triplette = set()
         if db_conn and not args.no_cache:
-            for tripletta in triplette.lista.keys():
-                if not query_exists(db_conn, cognome, tripletta, args.force_exact):
-                    missing_triplette.append(tripletta)
-        else:
-            missing_triplette = list(triplette.lista.keys())
-
-        if missing_triplette and db_conn:
-            connessione = LevaPadova()
-            total_triplette = len(missing_triplette)
-            width = len(str(total_triplette))
-            for idx, tripletta in enumerate(missing_triplette, start=1):
-                risultati = connessione.query(
-                    cognome,
-                    tripletta,
-                    cognome_esatto=args.force_exact,
-                )
-                formatted = [format_result_row(row) for row in risultati]
+            cached_triplette = fetch_cached_triplette(
+                db_conn,
+                cognome,
+                args.force_exact,
+            )
+        connessione = None
+        total_triplette = len(triplette.lista)
+        width = len(str(total_triplette))
+        for idx, tripletta in enumerate(triplette.lista.keys(), start=1):
+            if db_conn and not args.no_cache:
+                if query_exists(db_conn, cognome, tripletta, args.force_exact):
+                    cached_triplette.add(tripletta)
+                    print(f"[{idx:{width}}/{total_triplette}] {cognome} {tripletta} (cache)")
+                    continue
+                covering = triplette.covering_triplette(tripletta, cached_triplette)
+                if covering:
+                    print(
+                        f"[{idx:{width}}/{total_triplette}] {cognome} {tripletta} "
+                        f"(inferenza da {covering})"
+                    )
+                    continue
+            if connessione is None:
+                connessione = LevaPadova()
+            risultati = connessione.query(
+                cognome,
+                tripletta,
+                cognome_esatto=args.force_exact,
+            )
+            formatted = [format_result_row(row) for row in risultati]
+            if db_conn:
                 upsert_people(db_conn, formatted, fonte="leva_padova")
                 record_query(
                     db_conn,
@@ -314,7 +328,8 @@ def main():
                     args.force_exact,
                     len(risultati),
                 )
-                print(f"[{idx:{width}}/{total_triplette}] {cognome} {tripletta} {len(risultati)}")
+                cached_triplette.add(tripletta)
+            print(f"[{idx:{width}}/{total_triplette}] {cognome} {tripletta} {len(risultati)}")
 
         results = (
             fetch_people(db_conn, cognome, args.force_exact) if db_conn else []
