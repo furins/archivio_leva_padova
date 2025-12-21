@@ -6,7 +6,14 @@ import requests
 from bs4 import BeautifulSoup
 
 from libraries.secrets import Secrets
-from libraries.storage import connect_db, fetch_people, query_exists, record_query, upsert_people
+from libraries.storage import (
+    connect_db,
+    fetch_cached_triplette,
+    fetch_people,
+    query_exists,
+    record_query,
+    upsert_people,
+)
 from datetime import datetime
 
 
@@ -191,13 +198,28 @@ class RicercaLeva:
         idx = 0
         totale = len(self.triplette.lista)
         lunghezza_str = len(str(totale))
+        cached_triplette = set()
         try:
+            if db_conn:
+                cached_triplette = fetch_cached_triplette(
+                    db_conn,
+                    self.cognome.strip(),
+                    self.cognome_esatto,
+                )
             for tripletta, conteggio in self.triplette.lista.items():
                 idx += 1
                 cognome = self.cognome.strip()
                 if db_conn and query_exists(db_conn, cognome, tripletta, self.cognome_esatto):
                     print(
                         f"[{idx:{lunghezza_str}}/{totale}]{cognome} {tripletta} (cache)"
+                    )
+                    cached_triplette.add(tripletta)
+                    continue
+                covering = self.triplette.covering_triplette(tripletta, cached_triplette)
+                if db_conn and covering:
+                    print(
+                        f"[{idx:{lunghezza_str}}/{totale}]{cognome} {tripletta} "
+                        f"(inferenza da {covering})"
                     )
                     continue
                 risultati = connessione.query(
@@ -219,6 +241,7 @@ class RicercaLeva:
                         self.cognome_esatto,
                         len(risultati),
                     )
+                    cached_triplette.add(tripletta)
                 if self.rate_limit_seconds > 0:
                     time.sleep(self.rate_limit_seconds)
                 if dump and filename is not None:
