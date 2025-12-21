@@ -5,13 +5,19 @@ from getpass import getpass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from libraries.leva_padova import LevaPadova
+from libraries.leva_padova import LevaPadova, parse_mother_surname
 from libraries.secrets import PASSWORD_ENV, USERNAME_ENV
 from libraries.storage import (
     DATA_FIELDS,
     connect_db,
+    count_query_triplette,
+    enqueue_surname,
     fetch_cached_triplette,
+    fetch_known_surnames,
+    fetch_pending_surnames,
     fetch_people,
+    mark_surname_done,
+    normalize_surname,
     query_exists,
     record_query,
     search_people,
@@ -90,8 +96,25 @@ def parse_args():
         action="store_true",
         help="Configura interattivamente le variabili in .envrc",
     )
+    parser.add_argument(
+        "--queue-status",
+        action="store_true",
+        help="Mostra l'elenco dei cognomi noti con stato interrogazioni",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=10,
+        help="Numero massimo di cognomi da processare per iterazione della coda",
+    )
+    parser.add_argument(
+        "--max-iterations",
+        type=int,
+        default=100,
+        help="Numero massimo di iterazioni della coda per evitare loop infiniti",
+    )
     args = parser.parse_args()
-    if not args.surnames and not args.config_env and not args.search:
+    if not args.surnames and not args.config_env and not args.search and not args.queue_status:
         parser.error("Specificare almeno un cognome oppure usare --config-env")
     return args
 
@@ -259,6 +282,18 @@ def format_result_row(raw_row: Sequence[object]) -> Tuple[str, ...]:
     )
 
 
+def enqueue_mother_surnames(
+    conn: sqlite3.Connection,
+    cognome_fonte: str,
+    rows: Iterable[sqlite3.Row],
+) -> None:
+    for row in rows:
+        madre = row["madre"] if isinstance(row, sqlite3.Row) else row[-1]
+        mother_surname = parse_mother_surname(madre)
+        if mother_surname:
+            enqueue_surname(conn, mother_surname, fonte=f"madre:{cognome_fonte}")
+
+
 def main():
     args = parse_args()
     if args.config_env:
@@ -267,6 +302,37 @@ def main():
             return
     db_path = Path(args.db) if args.db else DEFAULT_DB_FILE
     db_conn = connect_db(db_path) if (args.surnames or args.search) else None
+    if args.queue_status:
+        db_conn = connect_db(db_path)
+        names_file = Path(args.aggiorna) if args.aggiorna else DEFAULT_NOMI_FILE
+        total_triplette = len(Triplette(str(names_file)).lista)
+        known = fetch_known_surnames(db_conn)
+        full = 0
+        partial = 0
+        none = 0
+        for cognome in known:
+            count = count_query_triplette(db_conn, cognome, args.force_exact)
+            if count >= total_triplette:
+                status = "completo"
+                full += 1
+            elif count > 0:
+                status = "parziale"
+                partial += 1
+            else:
+                status = "nessuna"
+                none += 1
+            print(f"{cognome}\t{status}\t{count}/{total_triplette}")
+        print(
+            "Totali:\n"
+            f"- completi: {full}\n"
+            f"- parziali: {partial}\n"
+            f"- nessuna: {none}"
+        )
+        db_conn.close()
+        if not args.surnames and not args.search:
+            return
+    names_file = Path(args.aggiorna) if args.aggiorna else DEFAULT_NOMI_FILE
+    triplette = Triplette(str(names_file))
     if args.search and db_conn:
         fields = parse_search_fields(args.search_fields)
         results = search_people(
@@ -278,65 +344,88 @@ def main():
         print_search_results(results)
         if not args.surnames:
             return
-    names_file = Path(args.aggiorna) if args.aggiorna else DEFAULT_NOMI_FILE
-    triplette = Triplette(str(names_file))
     combined: Set[Tuple[str, ...]] = set()
     nuovi_nomi: Set[str] = set()
     existing_names = read_names_file(names_file) if args.aggiorna else set()
 
-    for raw_cognome in args.surnames:
-        cognome = raw_cognome.strip()
-        if not cognome:
-            continue
-        cached_triplette = set()
-        if db_conn and not args.no_cache:
-            cached_triplette = fetch_cached_triplette(
-                db_conn,
-                cognome,
-                args.force_exact,
-            )
-        connessione = None
-        total_triplette = len(triplette.lista)
-        width = len(str(total_triplette))
-        for idx, tripletta in enumerate(triplette.lista.keys(), start=1):
+    if db_conn and args.surnames:
+        for raw_cognome in args.surnames:
+            normalized = normalize_surname(raw_cognome)
+            if normalized:
+                enqueue_surname(db_conn, normalized, fonte="cli")
+
+    iterations = 0
+    pending: List[str] = []
+    if db_conn:
+        pending = fetch_pending_surnames(db_conn, args.batch_size)
+
+    while pending:
+        iterations += 1
+        if iterations > args.max_iterations:
+            print("Raggiunto il limite massimo di iterazioni della coda.")
+            break
+
+        for cognome in pending:
+            cached_triplette = set()
             if db_conn and not args.no_cache:
-                if query_exists(db_conn, cognome, tripletta, args.force_exact):
-                    cached_triplette.add(tripletta)
-                    print(f"[{idx:{width}}/{total_triplette}] {cognome} {tripletta} (cache)")
-                    continue
-                covering = triplette.covering_triplette(tripletta, cached_triplette)
-                if covering:
-                    print(
-                        f"[{idx:{width}}/{total_triplette}] {cognome} {tripletta} "
-                        f"(inferenza da {covering})"
-                    )
-                    continue
-            if connessione is None:
-                connessione = LevaPadova()
-            risultati = connessione.query(
-                cognome,
-                tripletta,
-                cognome_esatto=args.force_exact,
-            )
-            formatted = [format_result_row(row) for row in risultati]
-            if db_conn:
-                upsert_people(db_conn, formatted, fonte="leva_padova")
-                record_query(
+                cached_triplette = fetch_cached_triplette(
                     db_conn,
                     cognome,
-                    tripletta,
                     args.force_exact,
-                    len(risultati),
                 )
-                cached_triplette.add(tripletta)
-            print(f"[{idx:{width}}/{total_triplette}] {cognome} {tripletta} {len(risultati)}")
+            connessione = None
+            total_triplette = len(triplette.lista)
+            width = len(str(total_triplette))
+            for idx, tripletta in enumerate(triplette.lista.keys(), start=1):
+                if db_conn and not args.no_cache:
+                    if query_exists(db_conn, cognome, tripletta, args.force_exact):
+                        cached_triplette.add(tripletta)
+                        print(
+                            f"[{idx:{width}}/{total_triplette}] "
+                            f"{cognome} {tripletta} (cache)"
+                        )
+                        continue
+                    covering = triplette.covering_triplette(tripletta, cached_triplette)
+                    if covering:
+                        print(
+                            f"[{idx:{width}}/{total_triplette}] {cognome} {tripletta} "
+                            f"(inferenza da {covering})"
+                        )
+                        continue
+                if connessione is None:
+                    connessione = LevaPadova()
+                risultati = connessione.query(
+                    cognome,
+                    tripletta,
+                    cognome_esatto=args.force_exact,
+                )
+                formatted = [format_result_row(row) for row in risultati]
+                if db_conn:
+                    upsert_people(db_conn, formatted, fonte="leva_padova")
+                    record_query(
+                        db_conn,
+                        cognome,
+                        tripletta,
+                        args.force_exact,
+                        len(risultati),
+                    )
+                    cached_triplette.add(tripletta)
+                print(
+                    f"[{idx:{width}}/{total_triplette}] "
+                    f"{cognome} {tripletta} {len(risultati)}"
+                )
 
-        results = (
-            fetch_people(db_conn, cognome, args.force_exact) if db_conn else []
-        )
-        print_results(cognome, results)
-        combined.update(tuple(row) for row in results)
-        nuovi_nomi.update(row[1].lower() for row in results if len(row) > 1 and row[1])
+            results = (
+                fetch_people(db_conn, cognome, args.force_exact) if db_conn else []
+            )
+            print_results(cognome, results)
+            combined.update(tuple(row) for row in results)
+            nuovi_nomi.update(row[1].lower() for row in results if len(row) > 1 and row[1])
+            if db_conn:
+                enqueue_mother_surnames(db_conn, cognome, results)
+                mark_surname_done(db_conn, cognome)
+
+        pending = fetch_pending_surnames(db_conn, args.batch_size) if db_conn else []
 
     if args.output:
         write_results(args.output, combined)

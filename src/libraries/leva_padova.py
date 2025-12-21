@@ -1,3 +1,4 @@
+import re
 import time
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -15,6 +16,21 @@ from libraries.storage import (
     upsert_people,
 )
 from datetime import datetime
+
+
+def parse_mother_surname(madre: str) -> str | None:
+    if not madre:
+        return None
+    cleaned = madre.strip()
+    if not cleaned:
+        return None
+    match = re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ'`-]+", cleaned)
+    if not match:
+        return None
+    surname = match.group(0).strip("`'-")
+    if not surname:
+        return None
+    return surname.title()
 
 
 class RigaLeva:
