@@ -379,6 +379,19 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
             combined.update(tuple(row) for row in results)
             nuovi_nomi.update(row[1].lower() for row in results if len(row) > 1 and row[1])
             if db_conn:
+                surnames_seen: Set[str] = set()
+                for row in results:
+                    if not row:
+                        continue
+                    normalized = normalize_surname(row[0])
+                    if normalized and normalized not in surnames_seen:
+                        surnames_seen.add(normalized)
+                        enqueue_surname(
+                            db_conn,
+                            normalized,
+                            fonte=f"cognome:{cognome}",
+                            use_prefix=not args.force_exact,
+                        )
                 enqueue_mother_surnames(
                     db_conn,
                     cognome,
