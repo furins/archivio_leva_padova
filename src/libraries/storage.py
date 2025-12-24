@@ -149,6 +149,23 @@ def _init_db(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "surnames_queue", "fonte", "TEXT")
     _ensure_column(conn, "surnames_queue", "timestamp", "TEXT")
     conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS metrics_log (
+            id INTEGER PRIMARY KEY,
+            partial_triplette INTEGER NOT NULL,
+            total_triplette INTEGER NOT NULL,
+            total_surnames INTEGER NOT NULL,
+            elapsed_seconds REAL NOT NULL,
+            timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
+    _ensure_column(conn, "metrics_log", "timestamp", "TEXT")
+    _ensure_column(conn, "metrics_log", "elapsed_seconds", "REAL")
+    _ensure_column(conn, "metrics_log", "partial_triplette", "INTEGER")
+    _ensure_column(conn, "metrics_log", "total_triplette", "INTEGER")
+    _ensure_column(conn, "metrics_log", "total_surnames", "INTEGER")
+    conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS persons_hash_unico_idx "
         "ON persons(hash_unico);"
     )
@@ -318,6 +335,34 @@ def record_query(
     conn.commit()
 
 
+def record_metrics_log(
+    conn: sqlite3.Connection,
+    partial_triplette: int,
+    total_triplette: int,
+    total_surnames: int,
+    elapsed_seconds: float,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO metrics_log (
+            partial_triplette,
+            total_triplette,
+            total_surnames,
+            elapsed_seconds,
+            timestamp
+        )
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP);
+        """,
+        (
+            partial_triplette,
+            total_triplette,
+            total_surnames,
+            elapsed_seconds,
+        ),
+    )
+    conn.commit()
+
+
 def query_exists(
     conn: sqlite3.Connection,
     cognome: str,
@@ -396,6 +441,17 @@ def fetch_surnames(conn: sqlite3.Connection) -> List[str]:
         """
     )
     return [row[0] for row in cursor.fetchall()]
+
+
+def count_distinct_surnames(conn: sqlite3.Connection) -> int:
+    cursor = conn.execute(
+        """
+        SELECT COUNT(DISTINCT cognome)
+        FROM persons;
+        """
+    )
+    result = cursor.fetchone()
+    return int(result[0]) if result and result[0] is not None else 0
 
 
 def count_query_triplette(
@@ -574,4 +630,20 @@ def search_people(
         params.append(limit)
     conn.row_factory = sqlite3.Row
     cursor = conn.execute(sql, params)
+    return cursor.fetchall()
+
+
+def fetch_metrics_log(conn: sqlite3.Connection) -> List[sqlite3.Row]:
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute(
+        """
+        SELECT timestamp,
+               partial_triplette,
+               total_triplette,
+               total_surnames,
+               elapsed_seconds
+        FROM metrics_log
+        ORDER BY timestamp;
+        """
+    )
     return cursor.fetchall()

@@ -9,11 +9,13 @@ from libraries.secrets import PASSWORD_ENV, USERNAME_ENV
 from libraries.storage import (
     DATA_FIELDS,
     connect_db,
+    count_distinct_surnames,
     count_query_triplette,
     enqueue_surname,
     fetch_cached_triplette,
     fetch_known_names,
     fetch_known_surnames,
+    fetch_metrics_log,
     fetch_surnames,
     fetch_pending_surnames,
     fetch_people,
@@ -22,11 +24,13 @@ from libraries.storage import (
     normalize_surname_prefix,
     normalize_queue_surnames,
     query_exists,
+    record_metrics_log,
     record_query,
     search_people,
     upsert_names,
     upsert_people,
 )
+from time import perf_counter
 from libraries.triplette import Triplette
 
 DEFAULT_NOMI_FILE = Path("data/nomi.txt")
@@ -71,6 +75,26 @@ def print_search_results(rows: Iterable[sqlite3.Row]):
     for row in rows:
         values = [row[field] or "" for field in DATA_FIELDS]
         print("\t".join(values))
+
+
+def print_metrics_log(rows: Iterable[sqlite3.Row]):
+    for row in rows:
+        timestamp = row["timestamp"] if isinstance(row, sqlite3.Row) else row[0]
+        partial = row["partial_triplette"] if isinstance(row, sqlite3.Row) else row[1]
+        total = row["total_triplette"] if isinstance(row, sqlite3.Row) else row[2]
+        surnames = row["total_surnames"] if isinstance(row, sqlite3.Row) else row[3]
+        elapsed = row["elapsed_seconds"] if isinstance(row, sqlite3.Row) else row[4]
+        print(
+            "\t".join(
+                [
+                    str(timestamp or ""),
+                    str(partial),
+                    str(total),
+                    str(surnames),
+                    f"{float(elapsed):.3f}",
+                ]
+            )
+        )
 
 
 def write_results(path: str, results: Iterable[Sequence[str]]):
@@ -249,6 +273,22 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                 print(surname)
         else:
             print("Nessun cognome disponibile nel database.")
+        if (
+            not args.surnames
+            and not args.search
+            and not args.queue_status
+            and not args.metrics_log
+        ):
+            db_conn.close()
+            return
+    if args.metrics_log:
+        if db_conn is None:
+            db_conn = connect_db(db_path)
+        metrics_rows = fetch_metrics_log(db_conn)
+        if metrics_rows:
+            print_metrics_log(metrics_rows)
+        else:
+            print("Nessuna riga di log disponibile.")
         if not args.surnames and not args.search and not args.queue_status:
             db_conn.close()
             return
@@ -304,6 +344,36 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
             db_conn.close()
         return
     triplette = Triplette(names)
+
+    def compute_progress_counts() -> Tuple[int, int]:
+        if not db_conn:
+            return (0, 0)
+        partial_count = 0
+        none_count = 0
+        total_triplette = len(triplette.lista)
+        known = fetch_known_surnames(db_conn)
+        for cognome in known:
+            count = count_query_triplette(db_conn, cognome, use_exact_query)
+            if count >= total_triplette:
+                continue
+            if count > 0:
+                partial_count += 1
+            else:
+                none_count += 1
+        return partial_count, none_count
+
+    def log_metrics(elapsed_seconds: float) -> None:
+        if not db_conn:
+            return
+        partial_count, none_count = compute_progress_counts()
+        total_surnames = count_distinct_surnames(db_conn)
+        record_metrics_log(
+            db_conn,
+            partial_count,
+            none_count,
+            total_surnames,
+            elapsed_seconds,
+        )
     if args.search and db_conn:
         fields = parse_search_fields(args.search_fields)
         results = search_people(
@@ -361,6 +431,7 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
             connessione = None
             total_triplette = len(triplette.lista)
             width = len(str(total_triplette))
+            last_elapsed = 0.0
             for idx, tripletta in enumerate(triplette.lista.keys(), start=1):
                 if db_conn and not args.no_cache:
                     if query_exists(db_conn, cognome_query, tripletta, use_exact_query):
@@ -369,21 +440,27 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                             f"[{idx:{width}}/{total_triplette}] "
                             f"{cognome} {tripletta} (cache)"
                         )
+                        last_elapsed = 0.0
                         continue
                     covering = triplette.covering_triplette(tripletta, cached_triplette)
                     if covering:
+                        cached_triplette.add(tripletta)
                         print(
                             f"[{idx:{width}}/{total_triplette}] {cognome} {tripletta} "
                             f"(inferenza da {covering})"
                         )
+                        last_elapsed = 0.0
                         continue
                 if connessione is None:
                     connessione = LevaPadova()
+                start_time = perf_counter()
                 risultati = connessione.query(
                     cognome_query,
                     tripletta,
                     cognome_esatto=use_exact_query,
                 )
+                elapsed_seconds = perf_counter() - start_time
+                last_elapsed = elapsed_seconds
                 formatted = [format_result_row(row) for row in risultati]
                 if db_conn:
                     upsert_people(db_conn, formatted, fonte="leva_padova")
@@ -399,6 +476,8 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                     f"[{idx:{width}}/{total_triplette}] "
                     f"{cognome} {tripletta} {len(risultati)}"
                 )
+
+            log_metrics(last_elapsed)
 
             cognome_lookup = normalized if match_mode == "soundex" else cognome_query
             results = (
