@@ -413,6 +413,7 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
             connessione = None
             total_triplette = len(triplette.lista)
             width = len(str(total_triplette))
+            last_elapsed = 0.0
             for idx, tripletta in enumerate(triplette.lista.keys(), start=1):
                 if db_conn and not args.no_cache:
                     if query_exists(db_conn, cognome_query, tripletta, use_exact_query):
@@ -457,6 +458,8 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                     f"{cognome} {tripletta} {len(risultati)}"
                 )
                 log_metrics(len(cached_triplette), elapsed_seconds)
+
+            log_metrics(last_elapsed)
 
             cognome_lookup = normalized if match_mode == "soundex" else cognome_query
             results = (
