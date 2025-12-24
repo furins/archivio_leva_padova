@@ -345,32 +345,14 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
         return
     triplette = Triplette(names)
 
-    def compute_progress_counts() -> Tuple[int, int]:
-        if not db_conn:
-            return (0, 0)
-        partial_count = 0
-        none_count = 0
-        total_triplette = len(triplette.lista)
-        known = fetch_known_surnames(db_conn)
-        for cognome in known:
-            count = count_query_triplette(db_conn, cognome, use_exact_query)
-            if count >= total_triplette:
-                continue
-            if count > 0:
-                partial_count += 1
-            else:
-                none_count += 1
-        return partial_count, none_count
-
-    def log_metrics(elapsed_seconds: float) -> None:
+    def log_metrics(partial_triplette: int, elapsed_seconds: float) -> None:
         if not db_conn:
             return
-        partial_count, none_count = compute_progress_counts()
         total_surnames = count_distinct_surnames(db_conn)
         record_metrics_log(
             db_conn,
-            partial_count,
-            none_count,
+            partial_triplette,
+            len(triplette.lista),
             total_surnames,
             elapsed_seconds,
         )
@@ -431,8 +413,7 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
             connessione = None
             total_triplette = len(triplette.lista)
             width = len(str(total_triplette))
-            last_remote_elapsed = 0.0
-            remote_request_made = False
+            last_elapsed = 0.0
             for idx, tripletta in enumerate(triplette.lista.keys(), start=1):
                 if db_conn and not args.no_cache:
                     if query_exists(db_conn, cognome_query, tripletta, use_exact_query):
@@ -441,6 +422,7 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                             f"[{idx:{width}}/{total_triplette}] "
                             f"{cognome} {tripletta} (cache)"
                         )
+                        log_metrics(len(cached_triplette), 0.0)
                         continue
                     covering = triplette.covering_triplette(tripletta, cached_triplette)
                     if covering:
@@ -449,6 +431,7 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                             f"[{idx:{width}}/{total_triplette}] {cognome} {tripletta} "
                             f"(inferenza da {covering})"
                         )
+                        log_metrics(len(cached_triplette), 0.0)
                         continue
                 if connessione is None:
                     connessione = LevaPadova()
@@ -459,8 +442,6 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                     cognome_esatto=use_exact_query,
                 )
                 elapsed_seconds = perf_counter() - start_time
-                last_remote_elapsed = elapsed_seconds
-                remote_request_made = True
                 formatted = [format_result_row(row) for row in risultati]
                 if db_conn:
                     upsert_people(db_conn, formatted, fonte="leva_padova")
@@ -476,6 +457,9 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
                     f"[{idx:{width}}/{total_triplette}] "
                     f"{cognome} {tripletta} {len(risultati)}"
                 )
+                log_metrics(len(cached_triplette), elapsed_seconds)
+
+            log_metrics(last_elapsed)
 
             if remote_request_made:
                 log_metrics(last_remote_elapsed)
