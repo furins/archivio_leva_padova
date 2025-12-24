@@ -461,6 +461,9 @@ def run(args, envrc_path: Path = ENVRC_PATH, default_db_path: Path = DEFAULT_DB_
 
             log_metrics(last_elapsed)
 
+            if remote_request_made:
+                log_metrics(last_remote_elapsed)
+
             cognome_lookup = normalized if match_mode == "soundex" else cognome_query
             results = (
                 fetch_people(db_conn, cognome_lookup, match_mode) if db_conn else []
