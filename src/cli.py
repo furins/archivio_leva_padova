@@ -70,6 +70,11 @@ def parse_args():
         help="Stampa l'elenco dei cognomi noti nel database",
     )
     parser.add_argument(
+        "--metrics-log",
+        action="store_true",
+        help="Mostra il log delle interrogazioni delle triplette",
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=10,
@@ -91,6 +96,7 @@ def parse_args():
         and not args.queue_status
         and not args.import_names
         and not args.list_surnames
+        and not args.metrics_log
     ):
         parser.error("Specificare almeno un cognome oppure usare --config-env")
     return args
