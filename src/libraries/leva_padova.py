@@ -58,15 +58,27 @@ class RigaLeva:
         if idx in (0, 1, 9, 10):
             return text.title().replace('!', '').replace('?', '')
         if idx == 2:
-            return int(text.replace(',00', ''))
+            cleaned = text.replace(',00', '').strip()
+            if not cleaned:
+                return None
+            return int(cleaned)
         if idx == 3:
-            return datetime.strptime(text, '%d/%m/%Y')
+            cleaned = text.strip()
+            if not cleaned or cleaned == "//":
+                return None
+            try:
+                return datetime.strptime(cleaned, '%d/%m/%Y')
+            except ValueError:
+                return None
         if idx in (4, 7, 8):
             return format_place(text.title())
         if idx == 5:
             return text.upper()
         if idx == 6:
-            return int(text)
+            cleaned = text.strip()
+            if not cleaned:
+                return None
+            return int(cleaned)
 
 
 class TabellaLeva:
